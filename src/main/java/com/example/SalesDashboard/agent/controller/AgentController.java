@@ -8,7 +8,6 @@ import com.example.SalesDashboard.framework.security.JwtAuthenticationFilter;
 
 import lombok.RequiredArgsConstructor;
 
-import org.springframework.beans.factory.annotation.Value;
 import org.springframework.core.io.ClassPathResource;
 import org.springframework.http.ContentDisposition;
 import org.springframework.http.HttpHeaders;
@@ -16,9 +15,10 @@ import org.springframework.http.HttpStatus;
 import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;
 import org.springframework.security.core.Authentication;
+import org.springframework.web.bind.annotation.*;
 import org.springframework.web.server.ResponseStatusException;
 
-import org.springframework.web.bind.annotation.*;
+import jakarta.servlet.http.HttpServletRequest;
 
 import java.io.ByteArrayInputStream;
 import java.io.ByteArrayOutputStream;
@@ -39,9 +39,6 @@ public class AgentController {
 
     private final AgentConnectionService
             agentConnectionService;
-
-    @Value("${agent.backend-ws-url}")
-    private String backendWsUrl;
 
 
     @PostMapping
@@ -86,8 +83,8 @@ public class AgentController {
      * next to it.
      *
      * Requires build/install/tally-agent-java (from running
-     * `./gradlew installDist` in the tally-agent-java project) to be
-     * zipped up once and placed at
+     * `./gradlew installDist` in the tally-agent-java project) to be zipped
+     * up once and placed at
      * src/main/resources/agent-dist/tally-agent-dist.zip in THIS
      * project. Rebuild/replace that resource whenever the agent code
      * changes; it does not need to change per user.
@@ -95,7 +92,8 @@ public class AgentController {
     @GetMapping("/{agentId}/download")
     public ResponseEntity<byte[]> downloadAgentBundle(
             @PathVariable String agentId,
-            Authentication authentication
+            Authentication authentication,
+            HttpServletRequest request
     ) throws IOException {
 
         String userId =
@@ -105,7 +103,7 @@ public class AgentController {
                 agentService.getOwnedAgent(userId, agentId);
 
         String properties =
-                buildAgentProperties(agent);
+                buildAgentProperties(agent, request);
 
         ClassPathResource distResource =
                 new ClassPathResource("agent-dist/tally-agent-dist.zip");
@@ -122,7 +120,8 @@ public class AgentController {
 
         byte[] bundled;
 
-        try (InputStream distStream = distResource.getInputStream()) {
+        try (InputStream distStream =
+                     distResource.getInputStream()) {
 
             bundled = mergeConfigIntoDistribution(
                     distStream,
@@ -146,6 +145,7 @@ public class AgentController {
                 .body(bundled);
     }
 
+
     /**
      * Copies every entry from the pre-built distribution zip into a new
      * zip, then writes agent.properties into every directory that
@@ -164,32 +164,45 @@ public class AgentController {
 
         // First pass: find every directory that directly contains a
         // launcher script, so we know where to drop agent.properties.
-        java.util.Set<String> launcherDirs = new java.util.HashSet<>();
+        java.util.Set<String> launcherDirs =
+                new java.util.HashSet<>();
 
-        try (ZipInputStream scan = new ZipInputStream(
-                new ByteArrayInputStream(distBytes))) {
+        try (ZipInputStream scan =
+                     new ZipInputStream(
+                             new ByteArrayInputStream(distBytes))) {
 
             ZipEntry entry;
 
             while ((entry = scan.getNextEntry()) != null) {
 
                 String name = entry.getName();
-                int lastSlash = name.lastIndexOf('/');
-                String fileName = lastSlash >= 0
-                        ? name.substring(lastSlash + 1)
-                        : name;
+
+                int lastSlash =
+                        name.lastIndexOf('/');
+
+                String fileName =
+                        lastSlash >= 0
+                                ? name.substring(lastSlash + 1)
+                                : name;
 
                 boolean isLauncher =
                         fileName.endsWith(".bat")
                                 || (!fileName.contains(".")
-                                    && lastSlash >= 0
-                                    && name.substring(0, lastSlash).endsWith("/bin"));
+                                && lastSlash >= 0
+                                && name.substring(
+                                        0,
+                                        lastSlash
+                                ).endsWith("/bin"));
 
                 if (isLauncher) {
 
-                    String dir = lastSlash >= 0
-                            ? name.substring(0, lastSlash + 1)
-                            : "";
+                    String dir =
+                            lastSlash >= 0
+                                    ? name.substring(
+                                            0,
+                                            lastSlash + 1
+                                    )
+                                    : "";
 
                     launcherDirs.add(dir);
                 }
@@ -197,23 +210,32 @@ public class AgentController {
         }
 
         if (launcherDirs.isEmpty()) {
-            // Fallback: just drop it at the zip root so it's never lost.
+
+            // Fallback: just drop it at the zip root
+            // so it's never lost.
             launcherDirs.add("");
         }
 
-        // Second pass: stream everything into the new zip, then add
-        // agent.properties into each discovered launcher directory.
-        ByteArrayOutputStream outBuffer = new ByteArrayOutputStream();
+        // Second pass: stream everything into the new zip,
+        // then add agent.properties into each discovered
+        // launcher directory.
+        ByteArrayOutputStream outBuffer =
+                new ByteArrayOutputStream();
 
-        try (ZipInputStream in = new ZipInputStream(
-                new ByteArrayInputStream(distBytes));
-             ZipOutputStream out = new ZipOutputStream(outBuffer)) {
+        try (ZipInputStream in =
+                     new ZipInputStream(
+                             new ByteArrayInputStream(distBytes));
+
+             ZipOutputStream out =
+                     new ZipOutputStream(outBuffer)) {
 
             ZipEntry entry;
 
             while ((entry = in.getNextEntry()) != null) {
 
-                out.putNextEntry(new ZipEntry(entry.getName()));
+                out.putNextEntry(
+                        new ZipEntry(entry.getName())
+                );
 
                 if (!entry.isDirectory()) {
                     in.transferTo(out);
@@ -224,8 +246,14 @@ public class AgentController {
 
             for (String dir : launcherDirs) {
 
-                out.putNextEntry(new ZipEntry(dir + "agent.properties"));
+                out.putNextEntry(
+                        new ZipEntry(
+                                dir + "agent.properties"
+                        )
+                );
+
                 out.write(configBytes);
+
                 out.closeEntry();
             }
         }
@@ -233,7 +261,28 @@ public class AgentController {
         return outBuffer.toByteArray();
     }
 
-    private String buildAgentProperties(Agent agent) {
+
+    /**
+     * Builds the agent.properties file.
+     *
+     * BACKEND_WS_URL is generated dynamically from the
+     * incoming HTTP request.
+     *
+     * Local:
+     *   http://localhost:8088
+     *   -> ws://localhost:8088/agent-ws
+     *
+     * Render:
+     *   https://sales-dashboard-backend-lo96.onrender.com
+     *   -> wss://sales-dashboard-backend-lo96.onrender.com/agent-ws
+     */
+    private String buildAgentProperties(
+            Agent agent,
+            HttpServletRequest request
+    ) {
+
+        String backendWsUrl =
+                getBackendWebSocketUrl(request);
 
         return "# Generated for agent: "
                 + agent.getAgentName()
@@ -255,6 +304,112 @@ public class AgentController {
 
 
     /**
+     * Dynamically creates the WebSocket URL based on
+     * the server URL used by the incoming request.
+     *
+     * Examples:
+     *
+     * Local:
+     *   http://localhost:8088
+     *   ->
+     *   ws://localhost:8088/agent-ws
+     *
+     * Render:
+     *   https://sales-dashboard-backend-lo96.onrender.com
+     *   ->
+     *   wss://sales-dashboard-backend-lo96.onrender.com/agent-ws
+     *
+     * X-Forwarded-Proto and X-Forwarded-Host are used because
+     * Render works as a reverse proxy in front of the Spring Boot
+     * application.
+     */
+    private String getBackendWebSocketUrl(
+            HttpServletRequest request
+    ) {
+
+        String forwardedProto =
+                request.getHeader("X-Forwarded-Proto");
+
+        String forwardedHost =
+                request.getHeader("X-Forwarded-Host");
+
+        String scheme;
+        String host;
+
+        /*
+         * Render normally sends X-Forwarded-Proto=https.
+         *
+         * If the application is running locally without a proxy,
+         * fall back to request.getScheme().
+         */
+        if (forwardedProto != null
+                && !forwardedProto.isBlank()) {
+
+            scheme =
+                    forwardedProto
+                            .split(",")[0]
+                            .trim();
+
+        } else {
+
+            scheme =
+                    request.getScheme();
+        }
+
+
+        /*
+         * Render sends the public hostname through
+         * X-Forwarded-Host.
+         *
+         * Locally, fall back to the actual server name/port.
+         */
+        if (forwardedHost != null
+                && !forwardedHost.isBlank()) {
+
+            host =
+                    forwardedHost
+                            .split(",")[0]
+                            .trim();
+
+        } else {
+
+            host =
+                    request.getServerName();
+
+            int port =
+                    request.getServerPort();
+
+            if (port != 80
+                    && port != 443) {
+
+                host =
+                        host
+                                + ":"
+                                + port;
+            }
+        }
+
+
+        /*
+         * Convert HTTP protocol to WebSocket protocol.
+         *
+         * http  -> ws
+         * https -> wss
+         */
+        String wsScheme =
+                "https".equalsIgnoreCase(scheme)
+                        ? "wss"
+                        : "ws";
+
+
+        return wsScheme
+                + "://"
+                + host
+                + "/agent-ws";
+    }
+
+
+    /**
      * Kept for cases where a user (or a script) wants just the raw
      * config without the full jar - e.g. re-pairing an agent that's
      * already installed on that PC.
@@ -262,20 +417,29 @@ public class AgentController {
     @GetMapping("/{agentId}/config")
     public ResponseEntity<byte[]> downloadAgentConfig(
             @PathVariable String agentId,
-            Authentication authentication
+            Authentication authentication,
+            HttpServletRequest request
     ) {
 
         String userId =
                 extractUserId(authentication);
 
         Agent agent =
-                agentService.getOwnedAgent(userId, agentId);
+                agentService.getOwnedAgent(
+                        userId,
+                        agentId
+                );
 
         byte[] body =
-                buildAgentProperties(agent)
-                        .getBytes(StandardCharsets.UTF_8);
+                buildAgentProperties(
+                        agent,
+                        request
+                ).getBytes(
+                        StandardCharsets.UTF_8
+                );
 
-        HttpHeaders headers = new HttpHeaders();
+        HttpHeaders headers =
+                new HttpHeaders();
 
         headers.setContentDisposition(
                 ContentDisposition
@@ -302,23 +466,32 @@ public class AgentController {
      * Agent.userId stores the actual user id (what
      * AgentHandshakeInterceptor and AgentRelayService key off of).
      */
-    private String extractUserId(Authentication authentication) {
+    private String extractUserId(
+            Authentication authentication
+    ) {
 
-        Object details = authentication.getDetails();
+        Object details =
+                authentication.getDetails();
 
-        if (details instanceof JwtAuthenticationFilter.JwtAuthenticationDetails jwtDetails) {
+        if (details instanceof
+                JwtAuthenticationFilter.JwtAuthenticationDetails
+                        jwtDetails) {
 
-            String userId = jwtDetails.getUserId();
+            String userId =
+                    jwtDetails.getUserId();
 
-            if (userId != null && !userId.isBlank()) {
+            if (userId != null
+                    && !userId.isBlank()) {
+
                 return userId;
             }
         }
 
-        // Fallback (should not normally happen): at least don't NPE.
+        // Fallback (should not normally happen):
+        // at least don't NPE.
         // Falling back to the email keeps things self-consistent,
-        // but should be treated as a sign the JWT is missing the
-        // userId claim.
+        // but should be treated as a sign the JWT is missing
+        // the userId claim.
         return authentication.getName();
     }
 }
