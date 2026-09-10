@@ -1,39 +1,36 @@
 package com.example.SalesDashboard.tally.Company.service;
 
 import com.example.SalesDashboard.agent.service.AgentRelayService;
-
 import com.example.SalesDashboard.tally.Company.dto.CompanyDto;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.node.ObjectNode;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
-import org.springframework.beans.factory.annotation.Value;
-import org.springframework.stereotype.Service;
 
-import java.io.IOException;
+import lombok.RequiredArgsConstructor;
+
+import org.springframework.beans.factory.annotation.Value;
+import org.springframework.http.HttpStatus;
+import org.springframework.stereotype.Service;
+import org.springframework.web.server.ResponseStatusException;
+
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
 
-
 @Service
+@RequiredArgsConstructor
 public class CompanyService {
 
-    private static final Logger log = LoggerFactory.getLogger(CompanyService.class);
     private static final String COMPANY_COLLECTION_ID = "List of Companies";
 
-    private final ObjectMapper objectMapper = new ObjectMapper();
+    private final ObjectMapper objectMapper;
     private final AgentRelayService agentRelayService;
 
     @Value("${tally.import-format:jsonex}")
     private String tallyExportFormat;
 
-    public CompanyService(AgentRelayService agentRelayService) {
-        this.agentRelayService = agentRelayService;
-    }
+    public List<CompanyDto> pullAllCompanies(String userId) {
 
-    public String pullAllCompaniesRaw(String userId) {
         ObjectNode payload = buildExportPayload();
 
         Map<String, String> headers = Map.of(
@@ -44,89 +41,172 @@ public class CompanyService {
                 "id", COMPANY_COLLECTION_ID
         );
 
-        return sendToTally(userId, headers, payload);
-    }
+        String jsonBody;
 
-    public List<CompanyDto> pullAllCompanies(String userId) {
-        String rawResponse = pullAllCompaniesRaw(userId);
+        try {
+            jsonBody = objectMapper.writeValueAsString(payload);
+        } catch (Exception e) {
+            throw new ResponseStatusException(
+                    HttpStatus.INTERNAL_SERVER_ERROR,
+                    "Failed to prepare Tally company request"
+            );
+        }
+
+        AgentRelayService.RelayResponse response;
+
+        try {
+            response = agentRelayService.relay(
+                    userId,
+                    "POST",
+                    headers,
+                    jsonBody
+            );
+        } catch (ResponseStatusException e) {
+            throw e;
+        } catch (Exception e) {
+            throw new ResponseStatusException(
+                    HttpStatus.BAD_GATEWAY,
+                    "Failed to communicate with Tally Agent"
+            );
+        }
+
+        if (response == null) {
+            throw new ResponseStatusException(
+                    HttpStatus.BAD_GATEWAY,
+                    "Empty response received from Tally Agent"
+            );
+        }
+
+        if (response.status() < 200 || response.status() >= 300) {
+            throw new ResponseStatusException(
+                    HttpStatus.BAD_GATEWAY,
+                    "Tally Agent returned HTTP status " + response.status()
+            );
+        }
+
+        String rawResponse = response.body();
+
+        if (rawResponse == null || rawResponse.isBlank()) {
+            throw new ResponseStatusException(
+                    HttpStatus.BAD_GATEWAY,
+                    "Empty response received from Tally"
+            );
+        }
+
         return parseCompanyCollection(rawResponse);
     }
 
-    
-    private ObjectNode buildExportPayload() {
-        ObjectNode staticVar = objectMapper.createObjectNode();
-        staticVar.put("name", "svExportFormat");
-        staticVar.put("value", tallyExportFormat);
 
-        ObjectNode root = objectMapper.createObjectNode();
-        // Deliberately no svCurrentCompany here - this lists companies,
-        // it isn't scoped to one already-selected company.
-        root.putArray("static_variables").add(staticVar);
+    private ObjectNode buildExportPayload() {
+
+        ObjectNode staticVariable =
+                objectMapper.createObjectNode();
+
+        staticVariable.put("name", "svExportFormat");
+        staticVariable.put("value", tallyExportFormat);
+
+        ObjectNode root =
+                objectMapper.createObjectNode();
+
+        root.putArray("static_variables")
+                .add(staticVariable);
 
         return root;
     }
 
-    private List<CompanyDto> parseCompanyCollection(String rawJson) {
+
+    private List<CompanyDto> parseCompanyCollection(
+            String rawJson
+    ) {
+
         List<CompanyDto> results = new ArrayList<>();
+
         try {
-            JsonNode root = objectMapper.readTree(rawJson);
-            JsonNode collection = root.path("data").path("collection");
+
+            JsonNode root =
+                    objectMapper.readTree(rawJson);
+
+            JsonNode collection =
+                    root.path("data").path("collection");
 
             if (!collection.isArray()) {
-                log.warn("Tally response had no 'data.collection' array: {}", rawJson);
-                return results;
-            }
 
-            for (JsonNode c : collection) {
-                String name = firstNonBlank(
-                        textOrNull(c.path("metadata").path("name")),
-                        textOrNull(c.path("name").path("value")),
-                        textOrNull(c.path("name"))
+                throw new ResponseStatusException(
+                        HttpStatus.BAD_GATEWAY,
+                        "Invalid company response received from Tally"
                 );
-                String guid = textOrNull(c.path("guid").path("value"));
-                String startingFrom = textOrNull(c.path("startingfrom").path("value"));
-                String endingAt = textOrNull(c.path("endingat").path("value"));
-
-               results.add(new CompanyDto(name));
             }
-        } catch (IOException e) {
-            throw new RuntimeException("Failed to parse Tally company list response", e);
+
+            for (JsonNode companyNode : collection) {
+
+                String name = firstNonBlank(
+                        textOrNull(
+                                companyNode
+                                        .path("metadata")
+                                        .path("name")
+                        ),
+
+                        textOrNull(
+                                companyNode
+                                        .path("name")
+                                        .path("value")
+                        ),
+
+                        textOrNull(
+                                companyNode.path("name")
+                        )
+                );
+
+                if (name != null) {
+
+                    results.add(
+                            new CompanyDto(name)
+                    );
+                }
+            }
+
+            return results;
+
+        } catch (ResponseStatusException e) {
+
+            throw e;
+
+        } catch (Exception e) {
+
+            throw new ResponseStatusException(
+                    HttpStatus.BAD_GATEWAY,
+                    "Failed to parse Tally company response"
+            );
         }
-        return results;
     }
 
     private String firstNonBlank(String... values) {
-        for (String v : values) {
-            if (v != null && !v.isBlank()) {
-                return v;
+
+        for (String value : values) {
+
+            if (value != null && !value.isBlank()) {
+                return value.trim();
             }
         }
+
         return null;
     }
 
     private String textOrNull(JsonNode node) {
-        if (node.isMissingNode() || node.isNull()) {
+
+        if (node == null ||
+                node.isMissingNode() ||
+                node.isNull()) {
+
             return null;
         }
-        String text = node.asText();
-        return text.isBlank() ? null : text;
-    }
 
-    private String sendToTally(String userId, Map<String, String> headers, Object payload) {
-        String jsonBody;
-        try {
-            jsonBody = objectMapper.writeValueAsString(payload);
-        } catch (IOException e) {
-            throw new RuntimeException("Failed to serialize payload to JSON", e);
+        String text = node.asText();
+
+        if (text == null || text.isBlank()) {
+            return null;
         }
 
-        log.debug("Relaying company list request through agent for user {}", userId);
-
-        AgentRelayService.RelayResponse response =
-                agentRelayService.relay(userId, "POST", headers, jsonBody);
-
-        log.debug("Tally company list response status (via agent): {}", response.status());
-
-        return response.body();
+        return text.trim();
     }
 }
