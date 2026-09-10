@@ -16,10 +16,6 @@ public class UserRegisterCommand {
     private String lastName;
     private String mobile;
     private String address;
-    private String street;
-    private String pinCode;
-    private String city;
-    private String district;
     private String message;
     private Date createdOn;
 }

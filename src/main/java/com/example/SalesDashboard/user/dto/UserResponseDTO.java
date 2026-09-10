@@ -15,11 +15,6 @@ public class UserResponseDTO {
     private String lastName;
     private String mobile;
     private String address;
-    private String street;
-    private String apartment;
-    private String pinCode;
-    private String city;
-    private String district;
     private UserRoles roles;
     private UserStatus status;
 
@@ -29,12 +24,7 @@ public class UserResponseDTO {
         this.firstName = user.getFirstName();
         this.lastName = user.getLastName();
         this.mobile = user.getMobile();
-        this.street = user.getStreet();
-        this.pinCode = user.getPinCode();
-        this.apartment = user.getApartment();
         this.address = user.getAddress();
-        this.city = user.getCity();
-        this.district = user.getDistrict();
         this.roles = user.getRoles();
         this.status = user.getStatus();
     }

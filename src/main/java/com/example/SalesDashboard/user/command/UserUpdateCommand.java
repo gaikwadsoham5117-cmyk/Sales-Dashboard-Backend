@@ -12,10 +12,5 @@ public class UserUpdateCommand {
     private String lastName;
     private String mobile;
     private String address;
-    private String street;
-    private String apartment;
-    private String pinCode;
-    private String city;
-    private String district;
     private UserStatus status;
 }

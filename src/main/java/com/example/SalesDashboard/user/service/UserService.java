@@ -51,9 +51,6 @@ public class UserService {
                 .lastName(request.getLastName())
                 .mobile(request.getMobile())
                 .address(request.getAddress())
-                .pinCode(request.getPinCode())
-                .city(request.getCity())
-                .district(request.getDistrict())
                 .roles(UserRoles.USER)
                 .status(UserStatus.ACTIVE)
                 .createdOn(new Date())
@@ -67,9 +64,6 @@ public class UserService {
                 .lastName(newUser.getLastName())
                 .mobile(newUser.getMobile())
                 .address(newUser.getAddress())
-                .pinCode(newUser.getPinCode())
-                .city(newUser.getCity())
-                .district(newUser.getDistrict())
                 .password(null)
                 .message("User registered successfully!")
                 .createdOn(newUser.getCreatedOn())
@@ -95,11 +89,6 @@ public class UserService {
                 case "lastName" -> user.setLastName((String) value);
                 case "mobile" -> user.setMobile((String) value);
                 case "address" -> user.setAddress((String) value);
-                case "street" -> user.setStreet((String) value);
-                case "pinCode" -> user.setPinCode((String) value);
-                case "city" -> user.setCity((String) value);
-                case "district" -> user.setDistrict((String) value);
-                case "apartment" -> user.setApartment((String) value);
                 case "roles" -> {
                     try {
                         user.setRoles(UserRoles.valueOf(value.toString().toUpperCase()));
