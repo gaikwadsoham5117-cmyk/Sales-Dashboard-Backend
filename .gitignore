@@ -8,4 +8,4 @@ build/
 .env.*
 !.env.example
 
-application.properties
+/src/main/resources/application.properties
