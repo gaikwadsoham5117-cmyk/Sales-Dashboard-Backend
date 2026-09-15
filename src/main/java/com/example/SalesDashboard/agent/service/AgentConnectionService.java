@@ -46,13 +46,6 @@ public class AgentConnectionService {
 
             agentRepository.save(agent);
         }
-
-        System.out.println(
-                "[AGENT CONNECTED] "
-                        + agentId
-                        + " | Session: "
-                        + session.getId()
-        );
     }
 
     public void disconnectAgent(
@@ -75,11 +68,6 @@ public class AgentConnectionService {
 
             agentRepository.save(agent);
         }
-
-        System.out.println(
-                "[AGENT DISCONNECTED] "
-                        + agentId
-        );
     }
 
     public WebSocketSession getAgentSession(

@@ -4,7 +4,6 @@ import com.example.SalesDashboard.agent.entity.Agent;
 import com.example.SalesDashboard.agent.repository.AgentRepository;
 
 import jakarta.servlet.http.HttpServletRequest;
-import jakarta.servlet.http.HttpServletResponse;
 
 import lombok.RequiredArgsConstructor;
 
@@ -68,18 +67,8 @@ public class AgentHandshakeInterceptor
                         .getParameter("agentKey");
 
 
-        System.out.println(
-                "[AGENT HANDSHAKE] agentId="
-                        + agentId
-        );
-
-
         if (agentId == null ||
                 agentId.isBlank()) {
-
-            System.out.println(
-                    "[AGENT HANDSHAKE FAILED] Missing agentId"
-            );
 
             return false;
         }
@@ -87,10 +76,6 @@ public class AgentHandshakeInterceptor
 
         if (agentKey == null ||
                 agentKey.isBlank()) {
-
-            System.out.println(
-                    "[AGENT HANDSHAKE FAILED] Missing agentKey"
-            );
 
             return false;
         }
@@ -106,10 +91,6 @@ public class AgentHandshakeInterceptor
 
 
         if (agentOptional.isEmpty()) {
-
-            System.out.println(
-                    "[AGENT HANDSHAKE FAILED] Invalid agent credentials"
-            );
 
             return false;
         }
@@ -128,14 +109,6 @@ public class AgentHandshakeInterceptor
         attributes.put(
                 "userId",
                 agent.getUserId()
-        );
-
-
-        System.out.println(
-                "[AGENT HANDSHAKE SUCCESS] "
-                        + agent.getAgentId()
-                        + " User: "
-                        + agent.getUserId()
         );
 
 

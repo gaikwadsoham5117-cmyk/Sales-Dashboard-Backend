@@ -8,27 +8,17 @@ import com.example.SalesDashboard.framework.security.JwtAuthenticationFilter;
 
 import lombok.RequiredArgsConstructor;
 
-import org.springframework.core.io.ClassPathResource;
 import org.springframework.http.ContentDisposition;
 import org.springframework.http.HttpHeaders;
-import org.springframework.http.HttpStatus;
 import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;
 import org.springframework.security.core.Authentication;
 import org.springframework.web.bind.annotation.*;
-import org.springframework.web.server.ResponseStatusException;
 
 import jakarta.servlet.http.HttpServletRequest;
 
-import java.io.ByteArrayInputStream;
-import java.io.ByteArrayOutputStream;
-import java.io.IOException;
-import java.io.InputStream;
 import java.nio.charset.StandardCharsets;
 import java.util.List;
-import java.util.zip.ZipEntry;
-import java.util.zip.ZipInputStream;
-import java.util.zip.ZipOutputStream;
 
 @RestController
 @RequestMapping("/api/agents")
@@ -70,195 +60,6 @@ public class AgentController {
 
         return agentConnectionService
                 .getAgentsByUserId(userId);
-    }
-
-
-    /**
-     * The one-click version of downloadAgentConfig(): instead of handing
-     * back a bare agent.properties that the user has to manually place
-     * next to a jar (fragile, easy to get wrong), this merges the
-     * generated config directly into a pre-built agent distribution and
-     * returns a single zip. The user just unzips it and runs the launcher
-     * script inside bin/ - agent.properties is already sitting right
-     * next to it.
-     *
-     * Requires build/install/tally-agent-java (from running
-     * `./gradlew installDist` in the tally-agent-java project) to be zipped
-     * up once and placed at
-     * src/main/resources/agent-dist/tally-agent-dist.zip in THIS
-     * project. Rebuild/replace that resource whenever the agent code
-     * changes; it does not need to change per user.
-     */
-    @GetMapping("/{agentId}/download")
-    public ResponseEntity<byte[]> downloadAgentBundle(
-            @PathVariable String agentId,
-            Authentication authentication,
-            HttpServletRequest request
-    ) throws IOException {
-
-        String userId =
-                extractUserId(authentication);
-
-        Agent agent =
-                agentService.getOwnedAgent(userId, agentId);
-
-        String properties =
-                buildAgentProperties(agent, request);
-
-        ClassPathResource distResource =
-                new ClassPathResource("agent-dist/tally-agent-dist.zip");
-
-        if (!distResource.exists()) {
-
-            throw new ResponseStatusException(
-                    HttpStatus.SERVICE_UNAVAILABLE,
-                    "Agent distribution has not been built into this backend yet. "
-                            + "Run `./gradlew installDist` in tally-agent-java, zip the resulting "
-                            + "folder, and place it at src/main/resources/agent-dist/tally-agent-dist.zip"
-            );
-        }
-
-        byte[] bundled;
-
-        try (InputStream distStream =
-                     distResource.getInputStream()) {
-
-            bundled = mergeConfigIntoDistribution(
-                    distStream,
-                    properties.getBytes(StandardCharsets.UTF_8)
-            );
-        }
-
-        HttpHeaders headers = new HttpHeaders();
-
-        headers.setContentDisposition(
-                ContentDisposition
-                        .attachment()
-                        .filename("tally-agent-" + agentId + ".zip")
-                        .build()
-        );
-
-        return ResponseEntity
-                .ok()
-                .headers(headers)
-                .contentType(MediaType.valueOf("application/zip"))
-                .body(bundled);
-    }
-
-
-    /**
-     * Copies every entry from the pre-built distribution zip into a new
-     * zip, then writes agent.properties into every directory that
-     * directly contains a launcher script (*.bat or the extension-less
-     * unix script) - i.e. right next to whatever the user is actually
-     * going to double-click/run, regardless of what the root folder
-     * happens to be named.
-     */
-    private byte[] mergeConfigIntoDistribution(
-            InputStream distStream,
-            byte[] configBytes
-    ) throws IOException {
-
-        byte[] distBytes =
-                distStream.readAllBytes();
-
-        // First pass: find every directory that directly contains a
-        // launcher script, so we know where to drop agent.properties.
-        java.util.Set<String> launcherDirs =
-                new java.util.HashSet<>();
-
-        try (ZipInputStream scan =
-                     new ZipInputStream(
-                             new ByteArrayInputStream(distBytes))) {
-
-            ZipEntry entry;
-
-            while ((entry = scan.getNextEntry()) != null) {
-
-                String name = entry.getName();
-
-                int lastSlash =
-                        name.lastIndexOf('/');
-
-                String fileName =
-                        lastSlash >= 0
-                                ? name.substring(lastSlash + 1)
-                                : name;
-
-                boolean isLauncher =
-                        fileName.endsWith(".bat")
-                                || (!fileName.contains(".")
-                                && lastSlash >= 0
-                                && name.substring(
-                                        0,
-                                        lastSlash
-                                ).endsWith("/bin"));
-
-                if (isLauncher) {
-
-                    String dir =
-                            lastSlash >= 0
-                                    ? name.substring(
-                                            0,
-                                            lastSlash + 1
-                                    )
-                                    : "";
-
-                    launcherDirs.add(dir);
-                }
-            }
-        }
-
-        if (launcherDirs.isEmpty()) {
-
-            // Fallback: just drop it at the zip root
-            // so it's never lost.
-            launcherDirs.add("");
-        }
-
-        // Second pass: stream everything into the new zip,
-        // then add agent.properties into each discovered
-        // launcher directory.
-        ByteArrayOutputStream outBuffer =
-                new ByteArrayOutputStream();
-
-        try (ZipInputStream in =
-                     new ZipInputStream(
-                             new ByteArrayInputStream(distBytes));
-
-             ZipOutputStream out =
-                     new ZipOutputStream(outBuffer)) {
-
-            ZipEntry entry;
-
-            while ((entry = in.getNextEntry()) != null) {
-
-                out.putNextEntry(
-                        new ZipEntry(entry.getName())
-                );
-
-                if (!entry.isDirectory()) {
-                    in.transferTo(out);
-                }
-
-                out.closeEntry();
-            }
-
-            for (String dir : launcherDirs) {
-
-                out.putNextEntry(
-                        new ZipEntry(
-                                dir + "agent.properties"
-                        )
-                );
-
-                out.write(configBytes);
-
-                out.closeEntry();
-            }
-        }
-
-        return outBuffer.toByteArray();
     }
 
 

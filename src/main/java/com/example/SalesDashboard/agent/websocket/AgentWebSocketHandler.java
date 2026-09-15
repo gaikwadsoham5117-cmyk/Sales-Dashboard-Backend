@@ -32,10 +32,6 @@ public class AgentWebSocketHandler extends TextWebSocketHandler {
         String agentId =
                 (String) session.getAttributes().get("agentId");
 
-        System.out.println(
-                "[WEBSOCKET CONNECTED] Agent: " + agentId
-        );
-
         agentConnectionService.connectAgent(
                 agentId,
                 session
@@ -48,24 +44,13 @@ public class AgentWebSocketHandler extends TextWebSocketHandler {
             TextMessage message
     ) throws Exception {
 
-        String agentId =
-                (String) session.getAttributes().get("agentId");
-
         String payload = message.getPayload();
-
-        System.out.println(
-                "[MESSAGE FROM " + agentId + "] " + payload
-        );
 
         JsonNode node;
 
         try {
             node = mapper.readTree(payload);
         } catch (Exception e) {
-            System.out.println(
-                    "[WEBSOCKET] Ignoring non-JSON message from "
-                            + agentId + ": " + e.getMessage()
-            );
             return;
         }
 
@@ -98,20 +83,15 @@ public class AgentWebSocketHandler extends TextWebSocketHandler {
                 String requestId = node.path("requestId").asText("");
 
                 if (requestId.isBlank()) {
-                    System.out.println(
-                            "[WEBSOCKET] PROXY_RESPONSE from "
-                                    + agentId + " missing requestId, dropping"
-                    );
                     return;
                 }
 
                 pendingRequestRegistry.complete(requestId, node);
             }
 
-            default -> System.out.println(
-                    "[WEBSOCKET] Unknown message type from "
-                            + agentId + ": " + type
-            );
+            default -> {
+                // Unknown message type; nothing to do.
+            }
         }
     }
 
@@ -123,11 +103,6 @@ public class AgentWebSocketHandler extends TextWebSocketHandler {
 
         String agentId =
                 (String) session.getAttributes().get("agentId");
-
-        System.out.println(
-                "[WEBSOCKET DISCONNECTED] Agent: "
-                        + agentId
-        );
 
         if (agentId != null) {
 
@@ -141,11 +116,6 @@ public class AgentWebSocketHandler extends TextWebSocketHandler {
             Throwable exception
     ) throws Exception {
 
-        System.out.println(
-                "[WEBSOCKET ERROR] "
-                        + exception.getMessage()
-        );
-
         session.close();
     }
 
@@ -153,9 +123,8 @@ public class AgentWebSocketHandler extends TextWebSocketHandler {
         try {
             session.sendMessage(new TextMessage(mapper.writeValueAsString(node)));
         } catch (Exception e) {
-            System.out.println(
-                    "[WEBSOCKET] Failed to send message: " + e.getMessage()
-            );
+            // Send failed; connection will be cleaned up via
+            // afterConnectionClosed / handleTransportError.
         }
     }
 }
