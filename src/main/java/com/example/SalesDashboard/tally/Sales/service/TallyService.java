@@ -1,1754 +1,6 @@
-// // package com.example.SalesDashboard.tally.Sales.service;
-// // import com.example.SalesDashboard.tally.Sales.dto.SalesVoucherDTO;
-// // import com.example.SalesDashboard.tally.Sales.dto.SalesVoucherItemDTO;
-// // import com.example.SalesDashboard.tally.Sales.dto.TallyRequest;
-// // import com.fasterxml.jackson.databind.JsonNode;
-// // import com.fasterxml.jackson.databind.ObjectMapper;
-// // import lombok.RequiredArgsConstructor;
-// // import lombok.extern.slf4j.Slf4j;
-// // import org.springframework.beans.factory.annotation.Value;
-// // import org.springframework.http.HttpEntity;
-// // import org.springframework.http.HttpHeaders;
-// // import org.springframework.http.HttpMethod;
-// // import org.springframework.http.HttpStatus;
-// // import org.springframework.http.MediaType;
-// // import org.springframework.http.ResponseEntity;
-// // import org.springframework.stereotype.Service;
-// // import org.springframework.web.client.ResourceAccessException;
-// // import org.springframework.web.client.RestClientResponseException;
-// // import org.springframework.web.client.RestTemplate;
-// // import org.springframework.web.server.ResponseStatusException;
-// // import java.math.BigDecimal;
-// // import java.util.ArrayList;
-// // import java.util.List;
-// // import java.util.Map;
-// // import java.util.regex.Matcher;
-// // import java.util.regex.Pattern;
-// // @Slf4j
-// // @Service
-// // @RequiredArgsConstructor
-// // public class TallyService {
-// //     private final RestTemplate restTemplate;
-// //     private final ObjectMapper objectMapper;
-// //     // =========================================================
-// //     // TALLY CONFIGURATION
-// //     // =========================================================
-// //     @Value("${tally.base-url:http://127.0.0.1:9000}")
-// //     private String tallyBaseUrl;
-// //     @Value("${tally.company-name}")
-// //     private String tallyCompanyName;
-// //     // =========================================================
-// //     // DEFAULT COMPANY - RAW SALES VOUCHERS
-// //     // =========================================================
-// //     public JsonNode pullAllSalesVouchersRaw() {
-// //         return pullAllSalesVouchersRaw(tallyCompanyName);
-// //     }
-// //     // =========================================================
-// //     // COMPANY-WISE - RAW SALES VOUCHERS
-// //     // =========================================================
-// //     public JsonNode pullAllSalesVouchersRaw(
-// //             String companyName
-// //     ) {
-// //         validateCompanyName(companyName);
-// //         log.info(
-// //                 "Fetching raw sales vouchers for company: {}",
-// //                 companyName
-// //         );
-// //         ResponseEntity<String> response
-// //                 = callTally(
-// //                         buildAllSalesVouchersRequest(
-// //                                 companyName
-// //                         )
-// //                 );
-// //         try {
-// //             return objectMapper.readTree(
-// //                     response.getBody()
-// //             );
-// //         } catch (Exception e) {
-// //             log.error(
-// //                     "Failed to parse Tally response as JSON for company: {}",
-// //                     companyName,
-// //                     e
-// //             );
-// //             throw new ResponseStatusException(
-// //                     HttpStatus.BAD_GATEWAY,
-// //                     "Tally returned an unparsable response"
-// //             );
-// //         }
-// //     }
-// //     // =========================================================
-// //     // DEFAULT COMPANY - SALES VOUCHERS
-// //     // =========================================================
-// //     public List<SalesVoucherDTO> pullAllSalesVouchers() {
-// //         return pullAllSalesVouchers(
-// //                 tallyCompanyName
-// //         );
-// //     }
-// //     // =========================================================
-// //     // COMPANY-WISE - SALES VOUCHERS
-// //     // =========================================================
-// //     public List<SalesVoucherDTO> pullAllSalesVouchers(
-// //             String companyName
-// //     ) {
-// //         validateCompanyName(companyName);
-// //         log.info(
-// //                 "Fetching sales vouchers for company: {}",
-// //                 companyName
-// //         );
-// //         JsonNode root
-// //                 = pullAllSalesVouchersRaw(
-// //                         companyName
-// //                 );
-// //         String status
-// //                 = root.path("status")
-// //                         .asText("");
-// //         if (!"1".equals(status)) {
-// //             log.warn(
-// //                     "Tally responded with non-success status for company {}: {}",
-// //                     companyName,
-// //                     root
-// //             );
-// //             throw new ResponseStatusException(
-// //                     HttpStatus.BAD_GATEWAY,
-// //                     "Tally reported an error for company '"
-// //                     + companyName
-// //                     + "'. Raw response: "
-// //                     + root
-// //             );
-// //         }
-// //         JsonNode collection
-// //                 = root.path("data")
-// //                         .path("collection");
-// //         List<SalesVoucherDTO> vouchers
-// //                 = new ArrayList<>();
-// //         if (!collection.isArray()) {
-// //             log.warn(
-// //                     "Tally collection is not an array for company: {}",
-// //                     companyName
-// //             );
-// //             return vouchers;
-// //         }
-// //         for (JsonNode voucherNode : collection) {
-// //             vouchers.add(
-// //                     mapVoucher(voucherNode)
-// //             );
-// //         }
-// //         log.info(
-// //                 "Fetched {} sales vouchers from company: {}",
-// //                 vouchers.size(),
-// //                 companyName
-// //         );
-// //         return vouchers;
-// //     }
-// //     // =========================================================
-// //     // MAP VOUCHER
-// //     // =========================================================
-// //     private SalesVoucherDTO mapVoucher(
-// //             JsonNode voucherNode
-// //     ) {
-// //         String voucherNumber
-// //                 = extractValue(
-// //                         voucherNode.path(
-// //                                 "vouchernumber"
-// //                         )
-// //                 );
-// //         // -----------------------------------------------------
-// //         // MAP INVENTORY ITEMS
-// //         // -----------------------------------------------------
-// //         List<SalesVoucherItemDTO> items
-// //                 = mapItems(
-// //                         voucherNode.path(
-// //                                 "allinventoryentries"
-// //                         )
-// //                 );
-// //         // -----------------------------------------------------
-// //         // GET ACTUAL VOUCHER TOTAL
-// //         //
-// //         // 1. Try party ledger amount
-// //         // 2. If unavailable, calculate from item amounts
-// //         // -----------------------------------------------------
-// //         BigDecimal partyLedgerAmount
-// //                 = extractPartyLedgerAmount(
-// //                         voucherNode
-// //                 );
-// //         BigDecimal totalAmount;
-// //         if (partyLedgerAmount != null
-// //                 && partyLedgerAmount.compareTo(
-// //                         BigDecimal.ZERO
-// //                 ) != 0) {
-// //             totalAmount
-// //                     = partyLedgerAmount.abs();
-// //             log.debug(
-// //                     "Voucher {} total from party ledger = {}",
-// //                     voucherNumber,
-// //                     totalAmount
-// //             );
-// //         } else {
-// //             totalAmount
-// //                     = calculateTotalAmount(
-// //                             items
-// //                     );
-// //             log.debug(
-// //                     "Voucher {} total calculated from inventory = {}",
-// //                     voucherNumber,
-// //                     totalAmount
-// //             );
-// //         }
-// //         // -----------------------------------------------------
-// //         // BUILD DTO
-// //         // -----------------------------------------------------
-// //         return SalesVoucherDTO.builder()
-// //                 .date(
-// //                         extractValue(
-// //                                 voucherNode.path(
-// //                                         "date"
-// //                                 )
-// //                         )
-// //                 )
-// //                 .voucherTypeName(
-// //                         extractValue(
-// //                                 voucherNode.path(
-// //                                         "vouchertypename"
-// //                                 )
-// //                         )
-// //                 )
-// //                 .voucherNumber(
-// //                         voucherNumber
-// //                 )
-// //                 .partyLedgerName(
-// //                         extractValue(
-// //                                 voucherNode.path(
-// //                                         "partyledgername"
-// //                                 )
-// //                         )
-// //                 )
-// //                 .guid(
-// //                         extractValue(
-// //                                 voucherNode.path(
-// //                                         "guid"
-// //                                 )
-// //                         )
-// //                 )
-// //                 .masterId(
-// //                         extractValue(
-// //                                 voucherNode.path(
-// //                                         "masterid"
-// //                                 )
-// //                         )
-// //                 )
-// //                 .totalAmount(
-// //                         totalAmount
-// //                 )
-// //                 .items(
-// //                         items
-// //                 )
-// //                 .build();
-// //     }
-// //     // =========================================================
-// //     // CALCULATE TOTAL FROM INVENTORY ITEMS
-// //     // =========================================================
-// //     private BigDecimal calculateTotalAmount(
-// //             List<SalesVoucherItemDTO> items
-// //     ) {
-// //         if (items == null
-// //                 || items.isEmpty()) {
-// //             return BigDecimal.ZERO;
-// //         }
-// //         BigDecimal total
-// //                 = BigDecimal.ZERO;
-// //         for (SalesVoucherItemDTO item : items) {
-// //             if (item == null) {
-// //                 continue;
-// //             }
-// //             BigDecimal amount
-// //                     = item.getAmount();
-// //             if (amount == null) {
-// //                 continue;
-// //             }
-// //             total
-// //                     = total.add(amount);
-// //         }
-// //         return total;
-// //     }
-// //     // =========================================================
-// //     // EXTRACT PARTY LEDGER TOTAL
-// //     // =========================================================
-// //     private BigDecimal extractPartyLedgerAmount(
-// //             JsonNode voucherNode
-// //     ) {
-// //         JsonNode ledgerEntries
-// //                 = voucherNode.path(
-// //                         "ledgerentries"
-// //                 );
-// //         if (!ledgerEntries.isArray()) {
-// //             log.debug(
-// //                     "ledgerentries not available for voucher {}",
-// //                     extractValue(
-// //                             voucherNode.path(
-// //                                     "vouchernumber"
-// //                             )
-// //                     )
-// //             );
-// //             return null;
-// //         }
-// //         for (JsonNode ledgerEntry
-// //                 : ledgerEntries) {
-// //             boolean isPartyLedger
-// //                     = ledgerEntry
-// //                             .path("ispartyledger")
-// //                             .asBoolean(false);
-// //             if (!isPartyLedger) {
-// //                 continue;
-// //             }
-// //             String amount
-// //                     = extractValue(
-// //                             ledgerEntry.path(
-// //                                     "amount"
-// //                             )
-// //                     );
-// //             BigDecimal value
-// //                     = toBigDecimal(amount);
-// //             if (value != null) {
-// //                 log.debug(
-// //                         "Party ledger amount for voucher {} = {}",
-// //                         extractValue(
-// //                                 voucherNode.path(
-// //                                         "vouchernumber"
-// //                                 )
-// //                         ),
-// //                         value
-// //                 );
-// //                 return value;
-// //             }
-// //         }
-// //         return null;
-// //     }
-// //     // =========================================================
-// //     // MAP INVENTORY ITEMS
-// //     // =========================================================
-// //     private List<SalesVoucherItemDTO> mapItems(
-// //             JsonNode itemsNode
-// //     ) {
-// //         List<SalesVoucherItemDTO> items
-// //                 = new ArrayList<>();
-// //         if (!itemsNode.isArray()) {
-// //             return items;
-// //         }
-// //         for (JsonNode itemNode
-// //                 : itemsNode) {
-// //             String stockItemName
-// //                     = extractValue(
-// //                             itemNode.path(
-// //                                     "stockitemname"
-// //                             )
-// //                     );
-// //             String rate
-// //                     = extractValue(
-// //                             itemNode.path(
-// //                                     "rate"
-// //                             )
-// //                     );
-// //             String amount
-// //                     = extractValue(
-// //                             itemNode.path(
-// //                                     "amount"
-// //                             )
-// //                     );
-// //             String quantity
-// //                     = extractValue(
-// //                             itemNode.path(
-// //                                     "actualqty"
-// //                             )
-// //                     );
-// //             RateParts rateParts
-// //                     = splitRate(rate);
-// //             QuantityParts quantityParts
-// //                     = splitQuantity(quantity);
-// //             SalesVoucherItemDTO item
-// //                     = SalesVoucherItemDTO.builder()
-// //                             .stockItemName(
-// //                                     stockItemName
-// //                             )
-// //                             .rate(
-// //                                     toBigDecimal(
-// //                                             rateParts.value
-// //                                     )
-// //                             )
-// //                             .rateUnit(
-// //                                     rateParts.unit
-// //                             )
-// //                             .amount(
-// //                                     toBigDecimal(
-// //                                             amount
-// //                                     )
-// //                             )
-// //                             .quantity(
-// //                                     toBigDecimal(
-// //                                             quantityParts.value
-// //                                     )
-// //                             )
-// //                             .quantityUnit(
-// //                                     quantityParts.unit
-// //                             )
-// //                             .build();
-// //             items.add(item);
-// //         }
-// //         return items;
-// //     }
-// //     // =========================================================
-// //     // SPLIT RATE
-// //     // =========================================================
-// //     private RateParts splitRate(
-// //             String rate
-// //     ) {
-// //         if (rate == null
-// //                 || rate.isBlank()) {
-// //             return new RateParts(
-// //                     null,
-// //                     null
-// //             );
-// //         }
-// //         String cleaned
-// //                 = rate.trim();
-// //         String[] parts
-// //                 = cleaned.split(
-// //                         "/",
-// //                         2
-// //                 );
-// //         String value
-// //                 = parts.length > 0
-// //                         ? parts[0].trim()
-// //                         : null;
-// //         String unit
-// //                 = parts.length > 1
-// //                         ? parts[1].trim()
-// //                         : null;
-// //         return new RateParts(
-// //                 value,
-// //                 unit
-// //         );
-// //     }
-// //     // =========================================================
-// //     // SPLIT QUANTITY
-// //     // =========================================================
-// //     private QuantityParts splitQuantity(
-// //             String quantity
-// //     ) {
-// //         if (quantity == null
-// //                 || quantity.isBlank()) {
-// //             return new QuantityParts(
-// //                     null,
-// //                     null
-// //             );
-// //         }
-// //         String cleaned
-// //                 = quantity.trim();
-// //         Pattern pattern
-// //                 = Pattern.compile(
-// //                         "^([+-]?\\d+(?:\\.\\d+)?)\\s*(.*)$"
-// //                 );
-// //         Matcher matcher
-// //                 = pattern.matcher(cleaned);
-// //         if (!matcher.matches()) {
-// //             return new QuantityParts(
-// //                     null,
-// //                     null
-// //             );
-// //         }
-// //         String value
-// //                 = matcher.group(1);
-// //         String unit
-// //                 = matcher.group(2);
-// //         if (unit != null) {
-// //             unit
-// //                     = unit.trim();
-// //         }
-// //         return new QuantityParts(
-// //                 value,
-// //                 unit
-// //         );
-// //     }
-// //     // =========================================================
-// //     // EXTRACT TALLY VALUE
-// //     // =========================================================
-// //     private String extractValue(
-// //             JsonNode node
-// //     ) {
-// //         if (node == null
-// //                 || node.isMissingNode()
-// //                 || node.isNull()) {
-// //             return null;
-// //         }
-// //         // -----------------------------------------------------
-// //         // Tally JSONEX object
-// //         //
-// //         // {
-// //         //     "value": "1000"
-// //         // }
-// //         // -----------------------------------------------------
-// //         if (node.isObject()
-// //                 && node.has("value")) {
-// //             return node
-// //                     .path("value")
-// //                     .asText(null);
-// //         }
-// //         // -----------------------------------------------------
-// //         // STRING OR NUMBER
-// //         // -----------------------------------------------------
-// //         if (node.isTextual()
-// //                 || node.isNumber()) {
-// //             return node.asText();
-// //         }
-// //         return null;
-// //     }
-// //     // =========================================================
-// //     // STRING -> BIG DECIMAL
-// //     // =========================================================
-// //     private BigDecimal toBigDecimal(
-// //             String value
-// //     ) {
-// //         if (value == null
-// //                 || value.isBlank()) {
-// //             return null;
-// //         }
-// //         try {
-// //             return new BigDecimal(
-// //                     value.trim()
-// //             );
-// //         } catch (NumberFormatException e) {
-// //             log.warn(
-// //                     "Could not convert '{}' to BigDecimal",
-// //                     value
-// //             );
-// //             return null;
-// //         }
-// //     }
-// //     // =========================================================
-// //     // VALIDATE COMPANY NAME
-// //     // =========================================================
-// //     private void validateCompanyName(
-// //             String companyName
-// //     ) {
-// //         if (companyName == null
-// //                 || companyName.isBlank()) {
-// //             throw new ResponseStatusException(
-// //                     HttpStatus.BAD_REQUEST,
-// //                     "Company name cannot be empty"
-// //             );
-// //         }
-// //     }
-// //     // =========================================================
-// //     // RATE PARTS
-// //     // =========================================================
-// //     private static class RateParts {
-// //         private final String value;
-// //         private final String unit;
-// //         private RateParts(
-// //                 String value,
-// //                 String unit
-// //         ) {
-// //             this.value = value;
-// //             this.unit = unit;
-// //         }
-// //     }
-// //     // =========================================================
-// //     // QUANTITY PARTS
-// //     // =========================================================
-// //     private static class QuantityParts {
-// //         private final String value;
-// //         private final String unit;
-// //         private QuantityParts(
-// //                 String value,
-// //                 String unit
-// //         ) {
-// //             this.value = value;
-// //             this.unit = unit;
-// //         }
-// //     }
-// //     // =========================================================
-// //     // BUILD TALLY REQUEST
-// //     // COMPANY-WISE
-// //     // =========================================================
-// //     private TallyRequest buildAllSalesVouchersRequest(
-// //             String companyName
-// //     ) {
-// //         return TallyRequest.builder()
-// //                 .staticVariables(
-// //                         List.of(
-// //                                 new TallyRequest.StaticVariable(
-// //                                         "svExportFormat",
-// //                                         "jsonex"
-// //                                 ),
-// //                                 /*
-// //                                  * COMPANY IS NOW DYNAMIC
-// //                                  *
-// //                                  * Default API:
-// //                                  *     tallyCompanyName
-// //                                  *
-// //                                  * Company-wise API:
-// //                                  *     companyName
-// //                                  */
-// //                                 new TallyRequest.StaticVariable(
-// //                                         "svCurrentCompany",
-// //                                         companyName
-// //                                 )
-// //                         )
-// //                 )
-// //                 .tdlmessage(
-// //                         List.of(
-// //                                 TallyRequest.TdlMessage
-// //                                         .builder()
-// //                                         .definitions(
-// //                                                 List.of(
-// //                                                         TallyRequest.Definition
-// //                                                                 .builder()
-// //                                                                 .metadata(
-// //                                                                         Map.of(
-// //                                                                                 "name",
-// //                                                                                 "TSPL All Sales Vouchers",
-// //                                                                                 "type",
-// //                                                                                 "Collection"
-// //                                                                         )
-// //                                                                 )
-// //                                                                 .attributes(
-// //                                                                         List.of(
-// //                                                                                 Map.of(
-// //                                                                                         "Type",
-// //                                                                                         "Vouchers:VoucherType"
-// //                                                                                 ),
-// //                                                                                 Map.of(
-// //                                                                                         "Child Of",
-// //                                                                                         "$$VchTypeSales"
-// //                                                                                 ),
-// //                                                                                 Map.of(
-// //                                                                                         "Native Method",
-// //                                                                                         "Date, VoucherTypeName, VoucherNumber, PartyLedgerName, GUID, MasterID, AllInventoryEntries.List, LedgerEntries.List"
-// //                                                                                 )
-// //                                                                         )
-// //                                                                 )
-// //                                                                 .build()
-// //                                                 )
-// //                                         )
-// //                                         .build()
-// //                         )
-// //                 )
-// //                 .build();
-// //     }
-// //     // =========================================================
-// //     // CALL TALLY
-// //     // =========================================================
-// //     private ResponseEntity<String> callTally(
-// //             TallyRequest requestBody
-// //     ) {
-// //         HttpHeaders headers
-// //                 = new HttpHeaders();
-// //         headers.setContentType(
-// //                 MediaType.APPLICATION_JSON
-// //         );
-// //         headers.set(
-// //                 "version",
-// //                 "1"
-// //         );
-// //         headers.set(
-// //                 "tallyrequest",
-// //                 "export"
-// //         );
-// //         headers.set(
-// //                 "type",
-// //                 "collection"
-// //         );
-// //         headers.set(
-// //                 "id",
-// //                 "TSPLAllSalesVouchers"
-// //         );
-// //         // -----------------------------------------------------
-// //         // SERIALIZE REQUEST
-// //         // -----------------------------------------------------
-// //         String jsonBody;
-// //         try {
-// //             jsonBody
-// //                     = objectMapper.writeValueAsString(
-// //                             requestBody
-// //                     );
-// //         } catch (Exception e) {
-// //             log.error(
-// //                     "Failed to serialize Tally request body",
-// //                     e
-// //             );
-// //             throw new ResponseStatusException(
-// //                     HttpStatus.INTERNAL_SERVER_ERROR,
-// //                     "Failed to build Tally request"
-// //             );
-// //         }
-// //         log.debug(
-// //                 "Sending request to Tally at {}",
-// //                 tallyBaseUrl
-// //         );
-// //         log.debug(
-// //                 "Tally request company: {}",
-// //                 extractCompanyFromRequest(
-// //                         requestBody
-// //                 )
-// //         );
-// //         HttpEntity<String> entity
-// //                 = new HttpEntity<>(
-// //                         jsonBody,
-// //                         headers
-// //                 );
-// //         // -----------------------------------------------------
-// //         // SEND REQUEST TO TALLY
-// //         // -----------------------------------------------------
-// //         try {
-// //             ResponseEntity<String> response
-// //                     = restTemplate.exchange(
-// //                             tallyBaseUrl,
-// //                             HttpMethod.POST,
-// //                             entity,
-// //                             String.class
-// //                     );
-// //             log.debug(
-// //                     "Tally response status: {}",
-// //                     response.getStatusCode()
-// //             );
-// //             return response;
-// //         } catch (ResourceAccessException e) {
-// //             log.error(
-// //                     "Could not reach TallyPrime at {}. "
-// //                     + "Check that TallyPrime and the connector are running.",
-// //                     tallyBaseUrl,
-// //                     e
-// //             );
-// //             throw new ResponseStatusException(
-// //                     HttpStatus.SERVICE_UNAVAILABLE,
-// //                     "Could not reach TallyPrime at "
-// //                     + tallyBaseUrl
-// //                     + ". Ensure TallyPrime and TallyAPIConnectorV2.0.exe are running."
-// //             );
-// //         } catch (RestClientResponseException e) {
-// //             log.error(
-// //                     "Tally returned an error response: {} - {}",
-// //                     e.getStatusCode(),
-// //                     e.getResponseBodyAsString()
-// //             );
-// //             throw new ResponseStatusException(
-// //                     HttpStatus.BAD_GATEWAY,
-// //                     "Tally returned an error: "
-// //                     + e.getResponseBodyAsString()
-// //             );
-// //         }
-// //     }
-// //     // =========================================================
-// //     // EXTRACT COMPANY FOR LOGGING
-// //     // =========================================================
-// //     private String extractCompanyFromRequest(
-// //             TallyRequest requestBody
-// //     ) {
-// //         try {
-// //             JsonNode node
-// //                     = objectMapper.valueToTree(
-// //                             requestBody
-// //                     );
-// //             JsonNode staticVariables
-// //                     = node.path(
-// //                             "staticVariables"
-// //                     );
-// //             if (staticVariables.isArray()) {
-// //                 for (JsonNode variable
-// //                         : staticVariables) {
-// //                     String name
-// //                             = variable.path("name")
-// //                                     .asText("");
-// //                     if ("svCurrentCompany".equals(
-// //                             name
-// //                     )) {
-// //                         return variable
-// //                                 .path("value")
-// //                                 .asText("");
-// //                     }
-// //                 }
-// //             }
-// //         } catch (Exception e) {
-// //             log.debug(
-// //                     "Could not extract company from Tally request"
-// //             );
-// //         }
-// //         return "unknown";
-// //     }
-// // }
-// package com.example.SalesDashboard.tally.Sales.service;
-
-// import com.example.SalesDashboard.tally.Sales.dto.SalesVoucherDTO;
-// import com.example.SalesDashboard.tally.Sales.dto.SalesVoucherItemDTO;
-// import com.example.SalesDashboard.tally.Sales.dto.TallyRequest;
-
-// import com.fasterxml.jackson.databind.JsonNode;
-// import com.fasterxml.jackson.databind.ObjectMapper;
-
-// import lombok.RequiredArgsConstructor;
-// import lombok.extern.slf4j.Slf4j;
-
-// import org.springframework.beans.factory.annotation.Value;
-// import org.springframework.http.HttpEntity;
-// import org.springframework.http.HttpHeaders;
-// import org.springframework.http.HttpMethod;
-// import org.springframework.http.HttpStatus;
-// import org.springframework.http.MediaType;
-// import org.springframework.http.ResponseEntity;
-// import org.springframework.stereotype.Service;
-// import org.springframework.web.client.ResourceAccessException;
-// import org.springframework.web.client.RestClientResponseException;
-// import org.springframework.web.client.RestTemplate;
-// import org.springframework.web.server.ResponseStatusException;
-
-// import java.math.BigDecimal;
-// import java.util.ArrayList;
-// import java.util.List;
-// import java.util.Map;
-// import java.util.regex.Matcher;
-// import java.util.regex.Pattern;
-
-// @Slf4j
-// @Service
-// @RequiredArgsConstructor
-// public class TallyService {
-
-//     private final RestTemplate restTemplate;
-//     private final ObjectMapper objectMapper;
-
-//     // =========================================================
-//     // TALLY CONFIGURATION
-//     // =========================================================
-//     @Value("${tally.base-url:http://127.0.0.1:9000}")
-//     private String tallyBaseUrl;
-
-//     @Value("${tally.company-name}")
-//     private String tallyCompanyName;
-
-//     // =========================================================
-//     // DEFAULT COMPANY - RAW SALES VOUCHERS
-//     // =========================================================
-//     public JsonNode pullAllSalesVouchersRaw() {
-//         return pullAllSalesVouchersRaw(tallyCompanyName);
-//     }
-
-//     // =========================================================
-//     // COMPANY-WISE - RAW SALES VOUCHERS
-//     // =========================================================
-//     public JsonNode pullAllSalesVouchersRaw(String companyName) {
-
-//         validateCompanyName(companyName);
-
-//         log.info(
-//                 "Fetching all sales vouchers for company: {}",
-//                 companyName
-//         );
-
-//         ResponseEntity<String> response
-//                 = callTally(
-//                         buildAllSalesVouchersRequest(companyName)
-//                 );
-
-//         try {
-
-//             return objectMapper.readTree(
-//                     response.getBody()
-//             );
-
-//         } catch (Exception e) {
-
-//             log.error(
-//                     "Failed to parse Tally response as JSON for company: {}",
-//                     companyName,
-//                     e
-//             );
-
-//             throw new ResponseStatusException(
-//                     HttpStatus.BAD_GATEWAY,
-//                     "Tally returned an unparsable response"
-//             );
-//         }
-//     }
-
-//     // =========================================================
-//     // DEFAULT COMPANY - SALES VOUCHERS
-//     // =========================================================
-//     public List<SalesVoucherDTO> pullAllSalesVouchers() {
-
-//         return pullAllSalesVouchers(
-//                 tallyCompanyName
-//         );
-//     }
-
-//     // =========================================================
-//     // COMPANY-WISE - SALES VOUCHERS
-//     // =========================================================
-//     public List<SalesVoucherDTO> pullAllSalesVouchers(
-//             String companyName
-//     ) {
-
-//         validateCompanyName(companyName);
-
-//         log.info(
-//                 "Fetching all sales vouchers for company: {}",
-//                 companyName
-//         );
-
-//         JsonNode root
-//                 = pullAllSalesVouchersRaw(companyName);
-
-//         String status
-//                 = root.path("status")
-//                         .asText("");
-
-//         if (!"1".equals(status)) {
-
-//             log.warn(
-//                     "Tally responded with non-success status for company {}: {}",
-//                     companyName,
-//                     root
-//             );
-
-//             throw new ResponseStatusException(
-//                     HttpStatus.BAD_GATEWAY,
-//                     "Tally reported an error for company '"
-//                     + companyName
-//                     + "'. Raw response: "
-//                     + root
-//             );
-//         }
-
-//         JsonNode collection
-//                 = root.path("data")
-//                         .path("collection");
-
-//         List<SalesVoucherDTO> vouchers
-//                 = new ArrayList<>();
-
-//         if (!collection.isArray()) {
-
-//             log.warn(
-//                     "Tally collection is not an array for company: {}",
-//                     companyName
-//             );
-
-//             return vouchers;
-//         }
-
-//         // =====================================================
-//         // MAP EVERY VOUCHER RETURNED BY THE SALES COLLECTION
-//         // =====================================================
-//         for (JsonNode voucherNode : collection) {
-
-//             try {
-
-//                 SalesVoucherDTO voucher
-//                         = mapVoucher(voucherNode);
-
-//                 if (voucher != null) {
-//                     vouchers.add(voucher);
-//                 }
-
-//             } catch (Exception e) {
-
-//                 log.warn(
-//                         "Could not map sales voucher: {}",
-//                         voucherNode,
-//                         e
-//                 );
-//             }
-//         }
-
-//         log.info(
-//                 "Fetched {} sales vouchers from company: {}",
-//                 vouchers.size(),
-//                 companyName
-//         );
-
-//         return vouchers;
-//     }
-
-//     // =========================================================
-//     // MAP VOUCHER
-//     // =========================================================
-//     private SalesVoucherDTO mapVoucher(
-//             JsonNode voucherNode
-//     ) {
-
-//         String voucherNumber
-//                 = extractValue(
-//                         voucherNode.path(
-//                                 "vouchernumber"
-//                         )
-//                 );
-
-//         // -----------------------------------------------------
-//         // MAP INVENTORY ITEMS
-//         // -----------------------------------------------------
-//         List<SalesVoucherItemDTO> items
-//                 = mapItems(
-//                         voucherNode.path(
-//                                 "allinventoryentries"
-//                         )
-//                 );
-
-//         // -----------------------------------------------------
-//         // GET ACTUAL VOUCHER TOTAL
-//         //
-//         // 1. Try party ledger amount
-//         // 2. If unavailable, calculate from item amounts
-//         // -----------------------------------------------------
-//         BigDecimal partyLedgerAmount
-//                 = extractPartyLedgerAmount(
-//                         voucherNode
-//                 );
-
-//         BigDecimal totalAmount;
-
-//         if (partyLedgerAmount != null
-//                 && partyLedgerAmount.compareTo(
-//                         BigDecimal.ZERO
-//                 ) != 0) {
-
-//             totalAmount
-//                     = partyLedgerAmount.abs();
-
-//             log.debug(
-//                     "Voucher {} total from party ledger = {}",
-//                     voucherNumber,
-//                     totalAmount
-//             );
-
-//         } else {
-
-//             totalAmount
-//                     = calculateTotalAmount(
-//                             items
-//                     );
-
-//             log.debug(
-//                     "Voucher {} total calculated from inventory = {}",
-//                     voucherNumber,
-//                     totalAmount
-//             );
-//         }
-
-//         // -----------------------------------------------------
-//         // BUILD DTO
-//         // -----------------------------------------------------
-//         return SalesVoucherDTO.builder()
-//                 .date(
-//                         extractValue(
-//                                 voucherNode.path(
-//                                         "date"
-//                                 )
-//                         )
-//                 )
-//                 .voucherTypeName(
-//                         extractValue(
-//                                 voucherNode.path(
-//                                         "vouchertypename"
-//                                 )
-//                         )
-//                 )
-//                 .voucherNumber(
-//                         voucherNumber
-//                 )
-//                 .partyLedgerName(
-//                         extractValue(
-//                                 voucherNode.path(
-//                                         "partyledgername"
-//                                 )
-//                         )
-//                 )
-//                 .guid(
-//                         extractValue(
-//                                 voucherNode.path(
-//                                         "guid"
-//                                 )
-//                         )
-//                 )
-//                 .masterId(
-//                         extractValue(
-//                                 voucherNode.path(
-//                                         "masterid"
-//                                 )
-//                         )
-//                 )
-//                 .totalAmount(
-//                         totalAmount
-//                 )
-//                 .items(
-//                         items
-//                 )
-//                 .build();
-//     }
-
-//     // =========================================================
-//     // CALCULATE TOTAL FROM INVENTORY ITEMS
-//     // =========================================================
-//     private BigDecimal calculateTotalAmount(
-//             List<SalesVoucherItemDTO> items
-//     ) {
-
-//         if (items == null
-//                 || items.isEmpty()) {
-
-//             return BigDecimal.ZERO;
-//         }
-
-//         BigDecimal total
-//                 = BigDecimal.ZERO;
-
-//         for (SalesVoucherItemDTO item : items) {
-
-//             if (item == null) {
-//                 continue;
-//             }
-
-//             BigDecimal amount
-//                     = item.getAmount();
-
-//             if (amount == null) {
-//                 continue;
-//             }
-
-//             total
-//                     = total.add(amount);
-//         }
-
-//         return total;
-//     }
-
-//     // =========================================================
-//     // EXTRACT PARTY LEDGER TOTAL
-//     // =========================================================
-//     private BigDecimal extractPartyLedgerAmount(
-//             JsonNode voucherNode
-//     ) {
-
-//         JsonNode ledgerEntries
-//                 = voucherNode.path(
-//                         "ledgerentries"
-//                 );
-
-//         if (!ledgerEntries.isArray()) {
-
-//             log.debug(
-//                     "ledgerentries not available for voucher {}",
-//                     extractValue(
-//                             voucherNode.path(
-//                                     "vouchernumber"
-//                             )
-//                     )
-//             );
-
-//             return null;
-//         }
-
-//         for (JsonNode ledgerEntry
-//                 : ledgerEntries) {
-
-//             boolean isPartyLedger
-//                     = ledgerEntry
-//                             .path("ispartyledger")
-//                             .asBoolean(false);
-
-//             if (!isPartyLedger) {
-//                 continue;
-//             }
-
-//             String amount
-//                     = extractValue(
-//                             ledgerEntry.path(
-//                                     "amount"
-//                             )
-//                     );
-
-//             BigDecimal value
-//                     = toBigDecimal(amount);
-
-//             if (value != null) {
-
-//                 log.debug(
-//                         "Party ledger amount for voucher {} = {}",
-//                         extractValue(
-//                                 voucherNode.path(
-//                                         "vouchernumber"
-//                                 )
-//                         ),
-//                         value
-//                 );
-
-//                 return value;
-//             }
-//         }
-
-//         return null;
-//     }
-
-//     // =========================================================
-//     // MAP INVENTORY ITEMS
-//     // =========================================================
-//     private List<SalesVoucherItemDTO> mapItems(
-//             JsonNode itemsNode
-//     ) {
-
-//         List<SalesVoucherItemDTO> items
-//                 = new ArrayList<>();
-
-//         if (!itemsNode.isArray()) {
-//             return items;
-//         }
-
-//         for (JsonNode itemNode
-//                 : itemsNode) {
-
-//             String stockItemName
-//                     = extractValue(
-//                             itemNode.path(
-//                                     "stockitemname"
-//                             )
-//                     );
-
-//             String rate
-//                     = extractValue(
-//                             itemNode.path(
-//                                     "rate"
-//                             )
-//                     );
-
-//             String amount
-//                     = extractValue(
-//                             itemNode.path(
-//                                     "amount"
-//                             )
-//                     );
-
-//             String quantity
-//                     = extractValue(
-//                             itemNode.path(
-//                                     "actualqty"
-//                             )
-//                     );
-
-//             RateParts rateParts
-//                     = splitRate(rate);
-
-//             QuantityParts quantityParts
-//                     = splitQuantity(quantity);
-
-//             SalesVoucherItemDTO item
-//                     = SalesVoucherItemDTO.builder()
-//                             .stockItemName(
-//                                     stockItemName
-//                             )
-//                             .rate(
-//                                     toBigDecimal(
-//                                             rateParts.value
-//                                     )
-//                             )
-//                             .rateUnit(
-//                                     rateParts.unit
-//                             )
-//                             .amount(
-//                                     toBigDecimal(
-//                                             amount
-//                                     )
-//                             )
-//                             .quantity(
-//                                     toBigDecimal(
-//                                             quantityParts.value
-//                                     )
-//                             )
-//                             .quantityUnit(
-//                                     quantityParts.unit
-//                             )
-//                             .build();
-
-//             items.add(item);
-//         }
-
-//         return items;
-//     }
-
-//     // =========================================================
-//     // SPLIT RATE
-//     // =========================================================
-//     private RateParts splitRate(
-//             String rate
-//     ) {
-
-//         if (rate == null
-//                 || rate.isBlank()) {
-
-//             return new RateParts(
-//                     null,
-//                     null
-//             );
-//         }
-
-//         String cleaned
-//                 = rate.trim();
-
-//         String[] parts
-//                 = cleaned.split(
-//                         "/",
-//                         2
-//                 );
-
-//         String value
-//                 = parts.length > 0
-//                         ? parts[0].trim()
-//                         : null;
-
-//         String unit
-//                 = parts.length > 1
-//                         ? parts[1].trim()
-//                         : null;
-
-//         return new RateParts(
-//                 value,
-//                 unit
-//         );
-//     }
-
-//     // =========================================================
-//     // SPLIT QUANTITY
-//     // =========================================================
-//     private QuantityParts splitQuantity(
-//             String quantity
-//     ) {
-
-//         if (quantity == null
-//                 || quantity.isBlank()) {
-
-//             return new QuantityParts(
-//                     null,
-//                     null
-//             );
-//         }
-
-//         String cleaned
-//                 = quantity.trim();
-
-//         Pattern pattern
-//                 = Pattern.compile(
-//                         "^([+-]?\\d+(?:\\.\\d+)?)\\s*(.*)$"
-//                 );
-
-//         Matcher matcher
-//                 = pattern.matcher(cleaned);
-
-//         if (!matcher.matches()) {
-
-//             return new QuantityParts(
-//                     null,
-//                     null
-//             );
-//         }
-
-//         String value
-//                 = matcher.group(1);
-
-//         String unit
-//                 = matcher.group(2);
-
-//         if (unit != null) {
-//             unit = unit.trim();
-//         }
-
-//         return new QuantityParts(
-//                 value,
-//                 unit
-//         );
-//     }
-
-//     // =========================================================
-//     // EXTRACT TALLY VALUE
-//     // =========================================================
-//     private String extractValue(
-//             JsonNode node
-//     ) {
-
-//         if (node == null
-//                 || node.isMissingNode()
-//                 || node.isNull()) {
-
-//             return null;
-//         }
-
-//         // Tally JSONEX object:
-//         //
-//         // {
-//         //     "value": "1000"
-//         // }
-//         if (node.isObject()
-//                 && node.has("value")) {
-
-//             return node
-//                     .path("value")
-//                     .asText(null);
-//         }
-
-//         // String or number
-//         if (node.isTextual()
-//                 || node.isNumber()) {
-
-//             return node.asText();
-//         }
-
-//         return null;
-//     }
-
-//     // =========================================================
-//     // STRING -> BIG DECIMAL
-//     // =========================================================
-//     private BigDecimal toBigDecimal(
-//             String value
-//     ) {
-
-//         if (value == null
-//                 || value.isBlank()) {
-
-//             return null;
-//         }
-
-//         try {
-
-//             return new BigDecimal(
-//                     value.trim()
-//             );
-
-//         } catch (NumberFormatException e) {
-
-//             log.warn(
-//                     "Could not convert '{}' to BigDecimal",
-//                     value
-//             );
-
-//             return null;
-//         }
-//     }
-
-//     // =========================================================
-//     // VALIDATE COMPANY NAME
-//     // =========================================================
-//     private void validateCompanyName(
-//             String companyName
-//     ) {
-
-//         if (companyName == null
-//                 || companyName.isBlank()) {
-
-//             throw new ResponseStatusException(
-//                     HttpStatus.BAD_REQUEST,
-//                     "Company name cannot be empty"
-//             );
-//         }
-//     }
-
-//     // =========================================================
-//     // RATE PARTS
-//     // =========================================================
-//     private static class RateParts {
-
-//         private final String value;
-//         private final String unit;
-
-//         private RateParts(
-//                 String value,
-//                 String unit
-//         ) {
-
-//             this.value = value;
-//             this.unit = unit;
-//         }
-//     }
-
-//     // =========================================================
-//     // QUANTITY PARTS
-//     // =========================================================
-//     private static class QuantityParts {
-
-//         private final String value;
-//         private final String unit;
-
-//         private QuantityParts(
-//                 String value,
-//                 String unit
-//         ) {
-
-//             this.value = value;
-//             this.unit = unit;
-//         }
-//     }
-
-//     // =========================================================
-//     // BUILD TALLY REQUEST
-//     // COMPANY-WISE
-//     // =========================================================
-//     private TallyRequest buildAllSalesVouchersRequest(
-//             String companyName
-//     ) {
-
-//         return TallyRequest.builder()
-//                 .staticVariables(
-//                         List.of(
-//                                 new TallyRequest.StaticVariable(
-//                                         "svExportFormat",
-//                                         "jsonex"
-//                                 ),
-//                                 new TallyRequest.StaticVariable(
-//                                         "svCurrentCompany",
-//                                         companyName
-//                                 )
-//                         )
-//                 )
-//                 .tdlmessage(
-//                         List.of(
-//                                 TallyRequest.TdlMessage
-//                                         .builder()
-//                                         .definitions(
-//                                                 List.of(
-//                                                         TallyRequest.Definition
-//                                                                 .builder()
-//                                                                 .metadata(
-//                                                                         Map.of(
-//                                                                                 "name",
-//                                                                                 "TSPL All Sales Vouchers",
-//                                                                                 "type",
-//                                                                                 "Collection"
-//                                                                         )
-//                                                                 )
-//                                                                 .attributes(
-//                                                                         List.of(
-//                                                                                 // =================================================
-//                                                                                 // TYPE
-//                                                                                 // =================================================
-
-//                                                                                 Map.of(
-//                                                                                         "Type",
-//                                                                                         "Vouchers:VoucherType"
-//                                                                                 ),
-//                                                                                 // =================================================
-//                                                                                 // CHILD OF SALES
-//                                                                                 // =================================================
-
-//                                                                                 Map.of(
-//                                                                                         "Child Of",
-//                                                                                         "$$VchTypeSales"
-//                                                                                 ),
-//                                                                                 // =================================================
-//                                                                                 // BELONGS TO = YES
-//                                                                                 // =================================================
-
-//                                                                                 Map.of(
-//                                                                                         "Belongs To",
-//                                                                                         "Yes"
-//                                                                                 ),
-//                                                                                 // =================================================
-//                                                                                 // FETCH REQUIRED FIELDS
-//                                                                                 // =================================================
-
-//                                                                                 Map.of(
-//                                                                                         "Native Method",
-//                                                                                         "Date, VoucherTypeName, VoucherNumber, PartyLedgerName, GUID, MasterID, AllInventoryEntries.List, LedgerEntries.List"
-//                                                                                 )
-//                                                                         )
-//                                                                 )
-//                                                                 .build()
-//                                                 )
-//                                         )
-//                                         .build()
-//                         )
-//                 )
-//                 .build();
-//     }
-
-//     // =========================================================
-//     // CALL TALLY
-//     // =========================================================
-//     private ResponseEntity<String> callTally(
-//             TallyRequest requestBody
-//     ) {
-
-//         HttpHeaders headers
-//                 = new HttpHeaders();
-
-//         headers.setContentType(
-//                 MediaType.APPLICATION_JSON
-//         );
-
-//         headers.set(
-//                 "version",
-//                 "1"
-//         );
-
-//         headers.set(
-//                 "tallyrequest",
-//                 "export"
-//         );
-
-//         headers.set(
-//                 "type",
-//                 "collection"
-//         );
-
-//         headers.set(
-//                 "id",
-//                 "TSPLAllSalesVouchers"
-//         );
-
-//         // =====================================================
-//         // SERIALIZE REQUEST
-//         // =====================================================
-//         String jsonBody;
-
-//         try {
-
-//             jsonBody
-//                     = objectMapper.writeValueAsString(
-//                             requestBody
-//                     );
-
-//         } catch (Exception e) {
-
-//             log.error(
-//                     "Failed to serialize Tally request body",
-//                     e
-//             );
-
-//             throw new ResponseStatusException(
-//                     HttpStatus.INTERNAL_SERVER_ERROR,
-//                     "Failed to build Tally request"
-//             );
-//         }
-
-//         log.debug(
-//                 "Sending request to Tally at {}",
-//                 tallyBaseUrl
-//         );
-
-//         log.debug(
-//                 "Tally request company: {}",
-//                 extractCompanyFromRequest(
-//                         requestBody
-//                 )
-//         );
-
-//         HttpEntity<String> entity
-//                 = new HttpEntity<>(
-//                         jsonBody,
-//                         headers
-//                 );
-
-//         // =====================================================
-//         // SEND REQUEST TO TALLY
-//         // =====================================================
-//         try {
-
-//             ResponseEntity<String> response
-//                     = restTemplate.exchange(
-//                             tallyBaseUrl,
-//                             HttpMethod.POST,
-//                             entity,
-//                             String.class
-//                     );
-
-//             log.debug(
-//                     "Tally response status: {}",
-//                     response.getStatusCode()
-//             );
-
-//             return response;
-
-//         } catch (ResourceAccessException e) {
-
-//             log.error(
-//                     "Could not reach TallyPrime at {}. "
-//                     + "Check that TallyPrime and the connector are running.",
-//                     tallyBaseUrl,
-//                     e
-//             );
-
-//             throw new ResponseStatusException(
-//                     HttpStatus.SERVICE_UNAVAILABLE,
-//                     "Could not reach TallyPrime at "
-//                     + tallyBaseUrl
-//                     + ". Ensure TallyPrime and TallyAPIConnectorV2.0.exe are running."
-//             );
-
-//         } catch (RestClientResponseException e) {
-
-//             log.error(
-//                     "Tally returned an error response: {} - {}",
-//                     e.getStatusCode(),
-//                     e.getResponseBodyAsString()
-//             );
-
-//             throw new ResponseStatusException(
-//                     HttpStatus.BAD_GATEWAY,
-//                     "Tally returned an error: "
-//                     + e.getResponseBodyAsString()
-//             );
-//         }
-//     }
-
-//     // =========================================================
-//     // EXTRACT COMPANY FOR LOGGING
-//     // =========================================================
-//     private String extractCompanyFromRequest(
-//             TallyRequest requestBody
-//     ) {
-
-//         try {
-
-//             JsonNode node
-//                     = objectMapper.valueToTree(
-//                             requestBody
-//                     );
-
-//             JsonNode staticVariables
-//                     = node.path(
-//                             "staticVariables"
-//                     );
-
-//             if (staticVariables.isArray()) {
-
-//                 for (JsonNode variable
-//                         : staticVariables) {
-
-//                     String name
-//                             = variable.path("name")
-//                                     .asText("");
-
-//                     if ("svCurrentCompany".equals(
-//                             name
-//                     )) {
-
-//                         return variable
-//                                 .path("value")
-//                                 .asText("");
-//                     }
-//                 }
-//             }
-
-//         } catch (Exception e) {
-
-//             log.debug(
-//                     "Could not extract company from Tally request"
-//             );
-//         }
-
-//         return "unknown";
-//     }
-// }
-
-
 package com.example.SalesDashboard.tally.Sales.service;
 
 import com.example.SalesDashboard.agent.service.AgentRelayService;
-
 import com.example.SalesDashboard.tally.Sales.dto.SalesVoucherBillAllocationDTO;
 import com.example.SalesDashboard.tally.Sales.dto.SalesVoucherCategoryAllocationDTO;
 import com.example.SalesDashboard.tally.Sales.dto.SalesVoucherCostCentreDTO;
@@ -1763,113 +15,43 @@ import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 
 import lombok.RequiredArgsConstructor;
-import lombok.extern.slf4j.Slf4j;
 
 import org.springframework.beans.factory.annotation.Value;
-import org.springframework.http.HttpEntity;
-import org.springframework.http.HttpHeaders;
-import org.springframework.http.HttpMethod;
 import org.springframework.http.HttpStatus;
-import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;
 import org.springframework.stereotype.Service;
-import org.springframework.web.client.ResourceAccessException;
-import org.springframework.web.client.RestClientResponseException;
-import org.springframework.web.client.RestTemplate;
 import org.springframework.web.server.ResponseStatusException;
 
 import java.math.BigDecimal;
+import java.time.LocalDate;
+import java.time.format.DateTimeFormatter;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
-@Slf4j
 @Service
 @RequiredArgsConstructor
 public class TallyService {
 
-    private final RestTemplate restTemplate;
     private final ObjectMapper objectMapper;
     private final AgentRelayService agentRelayService;
 
     // =========================================================
-    // TALLY CONFIGURATION
+    // CONFIGURATION
     // =========================================================
-
-    @Value("${tally.base-url:http://127.0.0.1:9000}")
-    private String tallyBaseUrl;
 
     @Value("${tally.company-name:}")
     private String tallyCompanyName;
 
     // =========================================================
-    // DEFAULT COMPANY - RAW
-    // =========================================================
-
-    public JsonNode pullAllSalesVouchersRaw(String userId) {
-        return pullAllSalesVouchersRaw(userId, tallyCompanyName);
-    }
-
-    // =========================================================
-    // COMPANY-WISE - RAW
-    // =========================================================
-
-    public JsonNode pullAllSalesVouchersRaw(String userId, String companyName) {
-
-        validateCompanyName(companyName);
-
-        log.info(
-                "Fetching raw sales vouchers for company: {} (user: {})",
-                companyName,
-                userId
-        );
-
-        ResponseEntity<String> response =
-                callTally(
-                        userId,
-                        buildAllSalesVouchersRequest(companyName)
-                );
-
-        try {
-
-            String body = response.getBody();
-
-            if (body == null || body.isBlank()) {
-
-                throw new ResponseStatusException(
-                        HttpStatus.BAD_GATEWAY,
-                        "Tally returned an empty response"
-                );
-            }
-
-            return objectMapper.readTree(body);
-
-        } catch (ResponseStatusException e) {
-
-            throw e;
-
-        } catch (Exception e) {
-
-            log.error(
-                    "Failed to parse Tally response for company: {}",
-                    companyName,
-                    e
-            );
-
-            throw new ResponseStatusException(
-                    HttpStatus.BAD_GATEWAY,
-                    "Tally returned an unparsable response"
-            );
-        }
-    }
-
-    // =========================================================
     // DEFAULT COMPANY
     // =========================================================
 
-    public List<SalesVoucherDTO> pullAllSalesVouchers(String userId) {
+    public List<SalesVoucherDTO> pullAllSalesVouchers(
+            String userId
+    ) {
 
         return pullAllSalesVouchers(
                 userId,
@@ -1878,7 +60,11 @@ public class TallyService {
     }
 
     // =========================================================
-    // COMPANY-WISE
+    // EXISTING COMPANY-WISE SALES VOUCHERS
+    // =========================================================
+    //
+    // EXISTING METHOD - KEEPING BEHAVIOUR UNCHANGED
+    //
     // =========================================================
 
     public List<SalesVoucherDTO> pullAllSalesVouchers(
@@ -1886,16 +72,41 @@ public class TallyService {
             String companyName
     ) {
 
+        validateUserId(userId);
         validateCompanyName(companyName);
 
-        log.info(
-                "Fetching sales vouchers for company: {} (user: {})",
-                companyName,
-                userId
-        );
+        TallyRequest request =
+                buildAllSalesVouchersRequest(companyName);
 
-        JsonNode root =
-                pullAllSalesVouchersRaw(userId, companyName);
+        ResponseEntity<String> response =
+                callTally(
+                        userId,
+                        request
+                );
+
+        String body = response.getBody();
+
+        if (body == null || body.isBlank()) {
+
+            throw new ResponseStatusException(
+                    HttpStatus.BAD_GATEWAY,
+                    "Tally returned an empty response"
+            );
+        }
+
+        JsonNode root;
+
+        try {
+
+            root = objectMapper.readTree(body);
+
+        } catch (Exception e) {
+
+            throw new ResponseStatusException(
+                    HttpStatus.BAD_GATEWAY,
+                    "Tally returned an invalid response"
+            );
+        }
 
         String status =
                 root.path("status")
@@ -1903,18 +114,11 @@ public class TallyService {
 
         if (!"1".equals(status)) {
 
-            log.warn(
-                    "Tally returned non-success status for company {}: {}",
-                    companyName,
-                    root
-            );
-
             throw new ResponseStatusException(
                     HttpStatus.BAD_GATEWAY,
                     "Tally reported an error for company '"
                             + companyName
-                            + "'. Raw response: "
-                            + root
+                            + "'"
             );
         }
 
@@ -1926,12 +130,6 @@ public class TallyService {
                 new ArrayList<>();
 
         if (!collection.isArray()) {
-
-            log.warn(
-                    "Tally collection is not an array for company: {}",
-                    companyName
-            );
-
             return vouchers;
         }
 
@@ -1946,24 +144,218 @@ public class TallyService {
                     vouchers.add(voucher);
                 }
 
-            } catch (Exception e) {
+            } catch (Exception ignored) {
 
-                log.error(
-                        "Failed to map voucher for company {}: {}",
-                        companyName,
-                        voucherNode,
-                        e
-                );
+                // One malformed voucher should not
+                // fail the complete request.
             }
         }
 
-        log.info(
-                "Fetched {} sales vouchers from company: {}",
-                vouchers.size(),
-                companyName
-        );
+        return vouchers;
+    }
+
+    // =========================================================
+    // DATE-RANGE SALES VOUCHERS
+    // =========================================================
+    // Uses the existing TSPLAllSalesVouchers collection.
+    // Only SVFromDate and SVToDate are supplied for the requested range.
+    // No new collection and no new date-filter formula are created.
+    // =========================================================
+
+    public List<SalesVoucherDTO> pullSalesVouchersByDateRange(
+            String userId,
+            String companyName,
+            LocalDate from,
+            LocalDate to
+    ) {
+
+        validateUserId(userId);
+        validateCompanyName(companyName);
+
+        if (from == null || to == null) {
+            throw new ResponseStatusException(
+                    HttpStatus.BAD_REQUEST,
+                    "From and To dates are required"
+            );
+        }
+
+        if (from.isAfter(to)) {
+            throw new ResponseStatusException(
+                    HttpStatus.BAD_REQUEST,
+                    "From date cannot be after To date"
+            );
+        }
+
+        TallyRequest request =
+                buildSalesVouchersDateRangeRequest(
+                        companyName,
+                        from,
+                        to
+                );
+
+        ResponseEntity<String> response =
+                callTally(
+                        userId,
+                        request
+                );
+
+        String body = response.getBody();
+
+        if (body == null || body.isBlank()) {
+            throw new ResponseStatusException(
+                    HttpStatus.BAD_GATEWAY,
+                    "Tally returned an empty response"
+            );
+        }
+
+        JsonNode root;
+
+        try {
+            root = objectMapper.readTree(body);
+        } catch (Exception e) {
+            throw new ResponseStatusException(
+                    HttpStatus.BAD_GATEWAY,
+                    "Tally returned an invalid response"
+            );
+        }
+
+        String status =
+                root.path("status")
+                        .asText("");
+
+        if (!"1".equals(status)) {
+            throw new ResponseStatusException(
+                    HttpStatus.BAD_GATEWAY,
+                    "Tally reported an error for company '"
+                            + companyName
+                            + "'"
+            );
+        }
+
+        JsonNode collection =
+                root.path("data")
+                        .path("collection");
+
+        List<SalesVoucherDTO> vouchers =
+                new ArrayList<>();
+
+        if (!collection.isArray()) {
+            return vouchers;
+        }
+
+        for (JsonNode voucherNode : collection) {
+            try {
+                SalesVoucherDTO voucher =
+                        mapVoucher(voucherNode);
+
+                if (voucher != null) {
+                    vouchers.add(voucher);
+                }
+            } catch (Exception ignored) {
+                // One malformed voucher should not fail the complete request.
+            }
+        }
 
         return vouchers;
+    }
+
+    // =========================================================
+    // BUILD DATE-RANGE TALLY REQUEST
+    // =========================================================
+    // IMPORTANT:
+    // Reuses the existing TSPLAllSalesVouchers collection.
+    // Only SVFromDate and SVToDate are changed.
+    // =========================================================
+
+    private TallyRequest buildSalesVouchersDateRangeRequest(
+            String companyName,
+            LocalDate from,
+            LocalDate to
+    ) {
+
+        DateTimeFormatter tallyDateFormatter =
+                DateTimeFormatter.ofPattern(
+                        "dd-MMM-yyyy",
+                        java.util.Locale.ENGLISH
+                );
+
+        String fromDate =
+                from.format(tallyDateFormatter);
+
+        String toDate =
+                to.format(tallyDateFormatter);
+
+        List<TallyRequest.StaticVariable> staticVariables =
+                List.of(
+                        new TallyRequest.StaticVariable(
+                                "svExportFormat",
+                                "jsonex"
+                        ),
+                        new TallyRequest.StaticVariable(
+                                "svCurrentCompany",
+                                companyName
+                        ),
+                        new TallyRequest.StaticVariable(
+                                "svFromDate",
+                                fromDate
+                        ),
+                        new TallyRequest.StaticVariable(
+                                "svToDate",
+                                toDate
+                        )
+                );
+
+        Map<String, String> metadata =
+                Map.of(
+                        "name",
+                        "TSPLAllSalesVouchers",
+                        "type",
+                        "Collection"
+                );
+
+        List<Map<String, String>> attributes =
+                List.of(
+                        Map.of(
+                                "Type",
+                                "Vouchers : VoucherType"
+                        ),
+                        Map.of(
+                                "Child of",
+                                "$$VchTypeSales"
+                        ),
+                        Map.of(
+                                "Belongs To",
+                                "Yes"
+                        ),
+                        Map.of(
+                                "Fetch",
+                                "Date, VoucherTypeName, VoucherNumber, PartyLedgerName, GUID, MasterID"
+                        ),
+                        Map.of(
+                                "Fetch",
+                                "AllInventoryEntries.List, LedgerEntries.List"
+                        )
+                );
+
+        TallyRequest.Definition definition =
+                TallyRequest.Definition.builder()
+                        .metadata(metadata)
+                        .attributes(attributes)
+                        .build();
+
+        TallyRequest.TdlMessage message =
+                TallyRequest.TdlMessage.builder()
+                        .definitions(
+                                List.of(definition)
+                        )
+                        .build();
+
+        return TallyRequest.builder()
+                .staticVariables(staticVariables)
+                .tdlmessage(
+                        List.of(message)
+                )
+                .build();
     }
 
     // =========================================================
@@ -1974,7 +366,9 @@ public class TallyService {
             JsonNode voucherNode
     ) {
 
-        if (voucherNode == null || voucherNode.isNull()) {
+        if (voucherNode == null
+                || voucherNode.isNull()) {
+
             return null;
         }
 
@@ -2010,7 +404,7 @@ public class TallyService {
                 );
 
         // -----------------------------------------------------
-        // GST SUMMARY
+        // GST
         // -----------------------------------------------------
 
         SalesVoucherGSTDTO gstDetails =
@@ -2021,7 +415,7 @@ public class TallyService {
                 );
 
         // -----------------------------------------------------
-        // TOTAL
+        // PARTY LEDGER AMOUNT
         // -----------------------------------------------------
 
         BigDecimal partyLedgerAmount =
@@ -2033,8 +427,8 @@ public class TallyService {
 
         if (partyLedgerAmount != null
                 && partyLedgerAmount.compareTo(
-                        BigDecimal.ZERO
-                ) != 0) {
+                BigDecimal.ZERO
+        ) != 0) {
 
             totalAmount =
                     partyLedgerAmount.abs();
@@ -2046,7 +440,7 @@ public class TallyService {
         }
 
         // -----------------------------------------------------
-        // BUILD RESPONSE
+        // BUILD DTO
         // -----------------------------------------------------
 
         return SalesVoucherDTO.builder()
@@ -2059,7 +453,9 @@ public class TallyService {
 
                 .voucherTypeName(
                         extractValue(
-                                voucherNode.path("vouchertypename")
+                                voucherNode.path(
+                                        "vouchertypename"
+                                )
                         )
                 )
 
@@ -2069,7 +465,9 @@ public class TallyService {
 
                 .partyLedgerName(
                         extractValue(
-                                voucherNode.path("partyledgername")
+                                voucherNode.path(
+                                        "partyledgername"
+                                )
                         )
                 )
 
@@ -2089,23 +487,17 @@ public class TallyService {
                         totalAmount
                 )
 
-                .items(
-                        items
-                )
+                .items(items)
 
-                .ledgerEntries(
-                        ledgerEntries
-                )
+                .ledgerEntries(ledgerEntries)
 
-                .gstDetails(
-                        gstDetails
-                )
+                .gstDetails(gstDetails)
 
                 .build();
     }
 
     // =========================================================
-    // GET FIRST AVAILABLE ARRAY
+    // FIRST ARRAY
     // =========================================================
 
     private JsonNode firstArray(
@@ -2119,7 +511,8 @@ public class TallyService {
 
         for (String name : names) {
 
-            JsonNode node = parent.path(name);
+            JsonNode node =
+                    parent.path(name);
 
             if (node.isArray()) {
                 return node;
@@ -2130,7 +523,7 @@ public class TallyService {
     }
 
     // =========================================================
-    // MAP INVENTORY ITEMS
+    // INVENTORY ITEMS
     // =========================================================
 
     private List<SalesVoucherItemDTO> mapItems(
@@ -2148,7 +541,9 @@ public class TallyService {
 
         for (JsonNode itemNode : itemsNode) {
 
-            if (itemNode == null || itemNode.isNull()) {
+            if (itemNode == null
+                    || itemNode.isNull()) {
+
                 continue;
             }
 
@@ -2176,23 +571,11 @@ public class TallyService {
                             itemNode.path("actualqty")
                     );
 
-            // -------------------------------------------------
-            // RATE
-            // -------------------------------------------------
-
             RateParts rateParts =
                     splitRate(rate);
 
-            // -------------------------------------------------
-            // QUANTITY
-            // -------------------------------------------------
-
             QuantityParts quantityParts =
                     splitQuantity(quantity);
-
-            // -------------------------------------------------
-            // GST RATES
-            // -------------------------------------------------
 
             List<SalesVoucherGSTRateDTO> gstRates =
                     mapGSTRates(
@@ -2204,10 +587,6 @@ public class TallyService {
                             )
                     );
 
-            // -------------------------------------------------
-            // ACCOUNTING ALLOCATIONS
-            // -------------------------------------------------
-
             List<SalesVoucherCategoryAllocationDTO>
                     allocations =
                     mapAccountingAllocations(
@@ -2217,10 +596,6 @@ public class TallyService {
                                     "accountingallocations.list"
                             )
                     );
-
-            // -------------------------------------------------
-            // ITEM DTO
-            // -------------------------------------------------
 
             SalesVoucherItemDTO item =
                     SalesVoucherItemDTO.builder()
@@ -2255,13 +630,9 @@ public class TallyService {
                                     quantityParts.unit
                             )
 
-                            .gstRates(
-                                    gstRates
-                            )
+                            .gstRates(gstRates)
 
-                            .allocations(
-                                    allocations
-                            )
+                            .allocations(allocations)
 
                             .build();
 
@@ -2272,7 +643,7 @@ public class TallyService {
     }
 
     // =========================================================
-    // MAP GST RATE DETAILS
+    // GST RATE DETAILS
     // =========================================================
 
     private List<SalesVoucherGSTRateDTO> mapGSTRates(
@@ -2292,6 +663,7 @@ public class TallyService {
 
             if (rateNode == null
                     || rateNode.isNull()) {
+
                 continue;
             }
 
@@ -2308,33 +680,25 @@ public class TallyService {
                     cleanTallyText(
                             extractValue(
                                     rateNode.path(
-                                            "gstratevaluationtype"
+                                            "gstrateevaluationtype"
                                     )
                             )
                     );
 
             String rate =
                     extractValue(
-                            rateNode.path(
-                                    "gstrate"
-                            )
+                            rateNode.path("gstrate")
                     );
 
             result.add(
                     SalesVoucherGSTRateDTO.builder()
-
-                            .dutyHead(
-                                    dutyHead
-                            )
-
+                            .dutyHead(dutyHead)
                             .evaluationType(
                                     evaluationType
                             )
-
                             .rate(
                                     toBigDecimal(rate)
                             )
-
                             .build()
             );
         }
@@ -2343,7 +707,7 @@ public class TallyService {
     }
 
     // =========================================================
-    // MAP ITEM ACCOUNTING ALLOCATIONS
+    // ACCOUNTING ALLOCATIONS
     // =========================================================
 
     private List<SalesVoucherCategoryAllocationDTO>
@@ -2366,6 +730,7 @@ public class TallyService {
 
             if (accountingAllocation == null
                     || accountingAllocation.isNull()) {
+
                 continue;
             }
 
@@ -2391,7 +756,7 @@ public class TallyService {
     }
 
     // =========================================================
-    // MAP CATEGORY ALLOCATIONS
+    // CATEGORY ALLOCATIONS
     // =========================================================
 
     private List<SalesVoucherCategoryAllocationDTO>
@@ -2414,6 +779,7 @@ public class TallyService {
 
             if (allocation == null
                     || allocation.isNull()) {
+
                 continue;
             }
 
@@ -2448,19 +814,11 @@ public class TallyService {
             result.add(
                     SalesVoucherCategoryAllocationDTO
                             .builder()
-
-                            .category(
-                                    category
-                            )
-
-                            .amount(
-                                    amount
-                            )
-
+                            .category(category)
+                            .amount(amount)
                             .costCentreAllocations(
                                     costCentreAllocations
                             )
-
                             .build()
             );
         }
@@ -2469,7 +827,7 @@ public class TallyService {
     }
 
     // =========================================================
-    // MAP COST CENTRE ALLOCATIONS
+    // COST CENTRE ALLOCATIONS
     // =========================================================
 
     private List<SalesVoucherCostCentreDTO>
@@ -2492,6 +850,7 @@ public class TallyService {
 
             if (node == null
                     || node.isNull()) {
+
                 continue;
             }
 
@@ -2512,15 +871,8 @@ public class TallyService {
             result.add(
                     SalesVoucherCostCentreDTO
                             .builder()
-
-                            .name(
-                                    name
-                            )
-
-                            .amount(
-                                    amount
-                            )
-
+                            .name(name)
+                            .amount(amount)
                             .build()
             );
         }
@@ -2529,7 +881,7 @@ public class TallyService {
     }
 
     // =========================================================
-    // MAP LEDGER ENTRIES
+    // LEDGER ENTRIES
     // =========================================================
 
     private List<SalesVoucherLedgerDTO>
@@ -2552,6 +904,7 @@ public class TallyService {
 
             if (ledger == null
                     || ledger.isNull()) {
+
                 continue;
             }
 
@@ -2579,13 +932,7 @@ public class TallyService {
                     ).asBoolean(false);
 
             boolean gstLedger =
-                    isGSTLedger(
-                            ledgerName
-                    );
-
-            // -------------------------------------------------
-            // BILL ALLOCATIONS
-            // -------------------------------------------------
+                    isGSTLedger(ledgerName);
 
             List<SalesVoucherBillAllocationDTO>
                     billAllocations =
@@ -2596,10 +943,6 @@ public class TallyService {
                                     "billallocations.list"
                             )
                     );
-
-            // -------------------------------------------------
-            // CATEGORY ALLOCATIONS
-            // -------------------------------------------------
 
             List<SalesVoucherCategoryAllocationDTO>
                     categoryAllocations =
@@ -2613,31 +956,16 @@ public class TallyService {
 
             result.add(
                     SalesVoucherLedgerDTO.builder()
-
-                            .ledgerName(
-                                    ledgerName
-                            )
-
-                            .amount(
-                                    amount
-                            )
-
-                            .partyLedger(
-                                    partyLedger
-                            )
-
-                            .gstLedger(
-                                    gstLedger
-                            )
-
+                            .ledgerName(ledgerName)
+                            .amount(amount)
+                            .partyLedger(partyLedger)
+                            .gstLedger(gstLedger)
                             .billAllocations(
                                     billAllocations
                             )
-
                             .categoryAllocations(
                                     categoryAllocations
                             )
-
                             .build()
             );
         }
@@ -2646,7 +974,7 @@ public class TallyService {
     }
 
     // =========================================================
-    // MAP BILL ALLOCATIONS
+    // BILL ALLOCATIONS
     // =========================================================
 
     private List<SalesVoucherBillAllocationDTO>
@@ -2669,6 +997,7 @@ public class TallyService {
 
             if (bill == null
                     || bill.isNull()) {
+
                 continue;
             }
 
@@ -2696,19 +1025,9 @@ public class TallyService {
             result.add(
                     SalesVoucherBillAllocationDTO
                             .builder()
-
-                            .name(
-                                    name
-                            )
-
-                            .billType(
-                                    billType
-                            )
-
-                            .amount(
-                                    amount
-                            )
-
+                            .name(name)
+                            .billType(billType)
+                            .amount(amount)
                             .build()
             );
         }
@@ -2746,10 +1065,6 @@ public class TallyService {
                         "vchgststatusisapplicable"
                 ).asBoolean(false);
 
-        // -----------------------------------------------------
-        // GST LEDGERS
-        // -----------------------------------------------------
-
         if (ledgerEntries != null) {
 
             for (SalesVoucherLedgerDTO ledger :
@@ -2767,6 +1082,7 @@ public class TallyService {
 
                 if (ledgerName == null
                         || amount == null) {
+
                     continue;
                 }
 
@@ -2838,10 +1154,6 @@ public class TallyService {
             }
         }
 
-        // -----------------------------------------------------
-        // ITEM GST RATES
-        // -----------------------------------------------------
-
         if (items != null) {
 
             for (SalesVoucherItemDTO item :
@@ -2849,6 +1161,7 @@ public class TallyService {
 
                 if (item == null
                         || item.getGstRates() == null) {
+
                     continue;
                 }
 
@@ -2859,36 +1172,17 @@ public class TallyService {
         }
 
         return SalesVoucherGSTDTO.builder()
-
-                .applicable(
-                        applicable
-                )
-
-                .cgst(
-                        cgst
-                )
-
-                .sgst(
-                        sgst
-                )
-
-                .igst(
-                        igst
-                )
-
-                .cess(
-                        cess
-                )
-
-                .stateCess(
-                        stateCess
-                )
-
+                .applicable(applicable)
+                .cgst(cgst)
+                .sgst(sgst)
+                .igst(igst)
+                .cess(cess)
+                .stateCess(stateCess)
                 .build();
     }
 
     // =========================================================
-    // CHECK GST LEDGER
+    // GST LEDGER CHECK
     // =========================================================
 
     private boolean isGSTLedger(
@@ -2935,6 +1229,7 @@ public class TallyService {
 
             if (item == null
                     || item.getAmount() == null) {
+
                 continue;
             }
 
@@ -3016,15 +1311,29 @@ public class TallyService {
         if (node.isObject()
                 && node.has("value")) {
 
-            return node
-                    .path("value")
-                    .asText(null);
+            JsonNode valueNode =
+                    node.get("value");
+
+            if (valueNode == null
+                    || valueNode.isNull()
+                    || valueNode.isMissingNode()) {
+
+                return null;
+            }
+
+            if (valueNode.isNumber()) {
+                return valueNode.toString();
+            }
+
+            return valueNode.asText(null);
         }
 
-        if (node.isTextual()
-                || node.isNumber()) {
+        if (node.isNumber()) {
+            return node.toString();
+        }
 
-            return node.asText();
+        if (node.isTextual()) {
+            return node.textValue();
         }
 
         return null;
@@ -3052,6 +1361,7 @@ public class TallyService {
         if (cleaned.equalsIgnoreCase(
                 "Not Applicable"
         )) {
+
             return null;
         }
 
@@ -3059,7 +1369,7 @@ public class TallyService {
     }
 
     // =========================================================
-    // STRING -> BIG DECIMAL
+    // STRING TO BIG DECIMAL
     // =========================================================
 
     private BigDecimal toBigDecimal(
@@ -3082,18 +1392,29 @@ public class TallyService {
         cleaned =
                 cleaned.replace(",", "");
 
+        cleaned =
+                cleaned.replace("₹", "")
+                        .trim();
+
+        if (cleaned.startsWith("Rs.")) {
+
+            cleaned =
+                    cleaned.substring(3)
+                            .trim();
+        }
+
+        if (cleaned.startsWith("Rs")) {
+
+            cleaned =
+                    cleaned.substring(2)
+                            .trim();
+        }
+
         try {
 
-            return new BigDecimal(
-                    cleaned
-            );
+            return new BigDecimal(cleaned);
 
-        } catch (NumberFormatException e) {
-
-            log.warn(
-                    "Could not convert '{}' to BigDecimal",
-                    value
-            );
+        } catch (NumberFormatException ignored) {
 
             return null;
         }
@@ -3167,9 +1488,7 @@ public class TallyService {
                 );
 
         Matcher matcher =
-                pattern.matcher(
-                        cleaned
-                );
+                pattern.matcher(cleaned);
 
         if (!matcher.matches()) {
 
@@ -3196,6 +1515,24 @@ public class TallyService {
     }
 
     // =========================================================
+    // VALIDATE USER
+    // =========================================================
+
+    private void validateUserId(
+            String userId
+    ) {
+
+        if (userId == null
+                || userId.isBlank()) {
+
+            throw new ResponseStatusException(
+                    HttpStatus.UNAUTHORIZED,
+                    "Authenticated user is required"
+            );
+        }
+    }
+
+    // =========================================================
     // VALIDATE COMPANY
     // =========================================================
 
@@ -3214,61 +1551,19 @@ public class TallyService {
     }
 
     // =========================================================
-    // RATE PARTS
+    // EXISTING BUILD TALLY REQUEST
     // =========================================================
-
-    private static class RateParts {
-
-        private final String value;
-        private final String unit;
-
-        private RateParts(
-                String value,
-                String unit
-        ) {
-
-            this.value = value;
-            this.unit = unit;
-        }
-    }
-
-    // =========================================================
-    // QUANTITY PARTS
-    // =========================================================
-
-    private static class QuantityParts {
-
-        private final String value;
-        private final String unit;
-
-        private QuantityParts(
-                String value,
-                String unit
-        ) {
-
-            this.value = value;
-            this.unit = unit;
-        }
-    }
-
-    // =========================================================
-    // BUILD TALLY REQUEST
     //
-    // IMPORTANT:
+    // EXISTING REQUEST - KEEPING IT SEPARATE
     //
-    // Type        : Vouchers : VoucherType
-    // Child of    : $$VchTypeSales
-    // Belongs To  : Yes
-    //
-    // This is what allows voucher types which belong to
-    // Sales, including custom Sales voucher types.
     // =========================================================
 
     private TallyRequest buildAllSalesVouchersRequest(
             String companyName
     ) {
 
-        List<TallyRequest.StaticVariable> staticVariables =
+        List<TallyRequest.StaticVariable>
+                staticVariables =
                 List.of(
 
                         new TallyRequest.StaticVariable(
@@ -3283,7 +1578,7 @@ public class TallyService {
                 );
 
         // -----------------------------------------------------
-        // COLLECTION DEFINITION
+        // COLLECTION
         // -----------------------------------------------------
 
         Map<String, String> metadata =
@@ -3326,45 +1621,35 @@ public class TallyService {
 
         TallyRequest.Definition definition =
                 TallyRequest.Definition.builder()
-
-                        .metadata(
-                                metadata
-                        )
-
-                        .attributes(
-                                attributes
-                        )
-
+                        .metadata(metadata)
+                        .attributes(attributes)
                         .build();
 
         TallyRequest.TdlMessage message =
                 TallyRequest.TdlMessage.builder()
-
                         .definitions(
-                                List.of(
-                                        definition
-                                )
+                                List.of(definition)
                         )
-
                         .build();
 
         return TallyRequest.builder()
-
                 .staticVariables(
                         staticVariables
                 )
-
                 .tdlmessage(
-                        List.of(
-                                message
-                        )
+                        List.of(message)
                 )
-
                 .build();
     }
 
     // =========================================================
-    // CALL TALLY
+    // EXISTING CALL TALLY
+    // =========================================================
+    //
+    // EXISTING API REQUEST ID
+    //
+    // TSPLAllSalesVouchers
+    //
     // =========================================================
 
     private ResponseEntity<String> callTally(
@@ -3372,21 +1657,40 @@ public class TallyService {
             TallyRequest requestBody
     ) {
 
-        // NOTE: this used to call restTemplate.exchange(tallyBaseUrl, ...)
-        // directly from the backend server. That only worked when Tally
-        // happened to be reachable from wherever the backend runs (e.g.
-        // everything on localhost during dev). In the real deployment,
-        // TallyPrime runs on the client's PC behind their own network,
-        // so the backend must route through that user's Tally Agent
-        // over the already-authenticated WebSocket connection instead.
+        Map<String, String> headers =
+                Map.of(
+                        "Content-Type",
+                        "application/json",
 
-        Map<String, String> headers = Map.of(
-                "Content-Type", "application/json",
-                "version", "1",
-                "tallyrequest", "export",
-                "type", "collection",
-                "id", "TSPLAllSalesVouchers"
+                        "version",
+                        "1",
+
+                        "tallyrequest",
+                        "export",
+
+                        "type",
+                        "collection",
+
+                        "id",
+                        "TSPLAllSalesVouchers"
+                );
+
+        return relayToAgent(
+                userId,
+                headers,
+                requestBody
         );
+    }
+
+    // =========================================================
+    // COMMON AGENT RELAY
+    // =========================================================
+
+    private ResponseEntity<String> relayToAgent(
+            String userId,
+            Map<String, String> headers,
+            TallyRequest requestBody
+    ) {
 
         String jsonBody;
 
@@ -3399,91 +1703,99 @@ public class TallyService {
 
         } catch (Exception e) {
 
-            log.error(
-                    "Failed to serialize Tally request body",
-                    e
-            );
-
             throw new ResponseStatusException(
                     HttpStatus.INTERNAL_SERVER_ERROR,
                     "Failed to build Tally request"
             );
         }
 
-        log.debug(
-                "Relaying Tally request through agent for user {} (company: {})",
-                userId,
-                extractCompanyFromRequest(
-                        requestBody
-                )
-        );
-
-        AgentRelayService.RelayResponse response =
-                agentRelayService.relay(
-                        userId,
-                        "POST",
-                        headers,
-                        jsonBody
-                );
-
-        log.debug(
-                "Tally response status (via agent): {}",
-                response.status()
-        );
-
-        return ResponseEntity
-                .status(response.status())
-                .body(response.body());
-    }
-
-    // =========================================================
-    // EXTRACT COMPANY FROM REQUEST
-    // =========================================================
-
-    private String extractCompanyFromRequest(
-            TallyRequest requestBody
-    ) {
+        AgentRelayService.RelayResponse response;
 
         try {
 
-            JsonNode node =
-                    objectMapper.valueToTree(
-                            requestBody
+            response =
+                    agentRelayService.relay(
+                            userId,
+                            "POST",
+                            headers,
+                            jsonBody
                     );
 
-            JsonNode staticVariables =
-                    node.path(
-                            "static_variables"
-                    );
+        } catch (ResponseStatusException e) {
 
-            if (staticVariables.isArray()) {
-
-                for (JsonNode variable :
-                        staticVariables) {
-
-                    String name =
-                            variable
-                                    .path("name")
-                                    .asText("");
-
-                    if ("svCurrentCompany".equals(
-                            name
-                    )) {
-
-                        return variable
-                                .path("value")
-                                .asText("");
-                    }
-                }
-            }
+            throw e;
 
         } catch (Exception e) {
 
-            log.debug(
-                    "Could not extract company from Tally request"
+            throw new ResponseStatusException(
+                    HttpStatus.BAD_GATEWAY,
+                    "Unable to communicate with Tally Agent"
             );
         }
 
-        return "unknown";
+        if (response == null) {
+
+            throw new ResponseStatusException(
+                    HttpStatus.BAD_GATEWAY,
+                    "Tally Agent returned no response"
+            );
+        }
+
+        int status =
+                response.status();
+
+        String body =
+                response.body();
+
+        if (status < 200
+                || status >= 300) {
+
+            throw new ResponseStatusException(
+                    HttpStatus.BAD_GATEWAY,
+                    "Tally Agent returned an unsuccessful response"
+            );
+        }
+
+        return ResponseEntity
+                .status(status)
+                .body(body);
+    }
+
+    // =========================================================
+    // RATE PARTS
+    // =========================================================
+
+    private static class RateParts {
+
+        private final String value;
+        private final String unit;
+
+        private RateParts(
+                String value,
+                String unit
+        ) {
+
+            this.value = value;
+            this.unit = unit;
+        }
+    }
+
+    // =========================================================
+    // QUANTITY PARTS
+    // =========================================================
+
+    private static class QuantityParts {
+
+        private final String value;
+        private final String unit;
+
+        private QuantityParts(
+                String value,
+                String unit
+        ) {
+
+            this.value = value;
+            this.unit = unit;
+        }
     }
 }
