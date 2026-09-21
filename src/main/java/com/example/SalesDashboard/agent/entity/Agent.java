@@ -22,8 +22,11 @@ public class Agent {
     // Unique ID generated for this installed agent
     private String agentId;
 
-    // MongoDB User ID who owns this agent
+    // Existing user mapping - KEEP for current APIs
     private String userId;
+
+    // Organization / company this agent belongs to
+    private String organizationId;
 
     // Secret key used to authenticate agent
     private String agentKey;

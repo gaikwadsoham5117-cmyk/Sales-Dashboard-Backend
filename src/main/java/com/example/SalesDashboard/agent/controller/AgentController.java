@@ -6,20 +6,24 @@ import com.example.SalesDashboard.agent.service.AgentConnectionService;
 import com.example.SalesDashboard.agent.service.AgentService;
 import com.example.SalesDashboard.framework.security.JwtAuthenticationFilter;
 
+import jakarta.servlet.http.HttpServletRequest;
+
 import lombok.RequiredArgsConstructor;
 
 import org.springframework.http.ContentDisposition;
 import org.springframework.http.HttpHeaders;
 import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;
-import org.springframework.security.core.Authentication;
-import org.springframework.web.bind.annotation.*;
 
-import jakarta.servlet.http.HttpServletRequest;
+import org.springframework.security.core.Authentication;
+
+import org.springframework.web.bind.annotation.*;
+import io.swagger.v3.oas.annotations.tags.Tag;
 
 import java.nio.charset.StandardCharsets;
 import java.util.List;
 
+@Tag(name = "Agent")
 @RestController
 @RequestMapping("/api/agents")
 @RequiredArgsConstructor
@@ -31,12 +35,13 @@ public class AgentController {
             agentConnectionService;
 
 
-    @PostMapping
+    // ============================================================
+    // EXISTING CREATE AGENT API
+    // ============================================================
+
+    @PostMapping("/create")
     public Agent createAgent(
-
-            @RequestBody
-            CreateAgentRequest request,
-
+            @RequestBody CreateAgentRequest request,
             Authentication authentication
     ) {
 
@@ -49,8 +54,28 @@ public class AgentController {
         );
     }
 
+    @PostMapping("/create/organization")
+    public Agent createOrganizationAgent(
+            @RequestBody CreateAgentRequest request,
+            Authentication authentication
+    ) {
 
-    @GetMapping
+        String userId =
+                extractUserId(authentication);
+
+        return agentService
+                .createAgentForUserOrganization(
+                        userId,
+                        request
+                );
+    }
+
+
+    // ============================================================
+    // EXISTING GET MY AGENTS API
+    // ============================================================
+
+    @GetMapping("/lookup/my")
     public List<Agent> getMyAgents(
             Authentication authentication
     ) {
@@ -63,158 +88,30 @@ public class AgentController {
     }
 
 
+    // ============================================================
+    // NEW ORGANIZATION AGENTS API
+    // ============================================================
+
     /**
-     * Builds the agent.properties file.
-     *
-     * BACKEND_WS_URL is generated dynamically from the
-     * incoming HTTP request.
-     *
-     * Local:
-     *   http://localhost:8088
-     *   -> ws://localhost:8088/agent-ws
-     *
-     * Render:
-     *   https://sales-dashboard-backend-lo96.onrender.com
-     *   -> wss://sales-dashboard-backend-lo96.onrender.com/agent-ws
+     * Returns agents belonging to the
+     * logged-in user's organization.
      */
-    private String buildAgentProperties(
-            Agent agent,
-            HttpServletRequest request
+    @GetMapping("/organization/lookup/my")
+    public List<Agent> getMyOrganizationAgents(
+            Authentication authentication
     ) {
 
-        String backendWsUrl =
-                getBackendWebSocketUrl(request);
+        String userId =
+                extractUserId(authentication);
 
-        return "# Generated for agent: "
-                + agent.getAgentName()
-                + "\n\n"
-                + "BACKEND_WS_URL="
-                + backendWsUrl
-                + "\n\n"
-                + "AGENT_ID="
-                + agent.getAgentId()
-                + "\n\n"
-                + "AGENT_KEY="
-                + agent.getAgentKey()
-                + "\n\n"
-                + "TALLY_LOCAL_URL=http://localhost:9000\n\n"
-                + "AGENT_NAME="
-                + agent.getAgentName()
-                + "\n";
+        Agent dummy = null;
+        return agentService
+                .getOrganizationAgentsForUser(
+                        userId
+                );
     }
 
 
-    /**
-     * Dynamically creates the WebSocket URL based on
-     * the server URL used by the incoming request.
-     *
-     * Examples:
-     *
-     * Local:
-     *   http://localhost:8088
-     *   ->
-     *   ws://localhost:8088/agent-ws
-     *
-     * Render:
-     *   https://sales-dashboard-backend-lo96.onrender.com
-     *   ->
-     *   wss://sales-dashboard-backend-lo96.onrender.com/agent-ws
-     *
-     * X-Forwarded-Proto and X-Forwarded-Host are used because
-     * Render works as a reverse proxy in front of the Spring Boot
-     * application.
-     */
-    private String getBackendWebSocketUrl(
-            HttpServletRequest request
-    ) {
-
-        String forwardedProto =
-                request.getHeader("X-Forwarded-Proto");
-
-        String forwardedHost =
-                request.getHeader("X-Forwarded-Host");
-
-        String scheme;
-        String host;
-
-        /*
-         * Render normally sends X-Forwarded-Proto=https.
-         *
-         * If the application is running locally without a proxy,
-         * fall back to request.getScheme().
-         */
-        if (forwardedProto != null
-                && !forwardedProto.isBlank()) {
-
-            scheme =
-                    forwardedProto
-                            .split(",")[0]
-                            .trim();
-
-        } else {
-
-            scheme =
-                    request.getScheme();
-        }
-
-
-        /*
-         * Render sends the public hostname through
-         * X-Forwarded-Host.
-         *
-         * Locally, fall back to the actual server name/port.
-         */
-        if (forwardedHost != null
-                && !forwardedHost.isBlank()) {
-
-            host =
-                    forwardedHost
-                            .split(",")[0]
-                            .trim();
-
-        } else {
-
-            host =
-                    request.getServerName();
-
-            int port =
-                    request.getServerPort();
-
-            if (port != 80
-                    && port != 443) {
-
-                host =
-                        host
-                                + ":"
-                                + port;
-            }
-        }
-
-
-        /*
-         * Convert HTTP protocol to WebSocket protocol.
-         *
-         * http  -> ws
-         * https -> wss
-         */
-        String wsScheme =
-                "https".equalsIgnoreCase(scheme)
-                        ? "wss"
-                        : "ws";
-
-
-        return wsScheme
-                + "://"
-                + host
-                + "/agent-ws";
-    }
-
-
-    /**
-     * Kept for cases where a user (or a script) wants just the raw
-     * config without the full jar - e.g. re-pairing an agent that's
-     * already installed on that PC.
-     */
     @GetMapping("/{agentId}/config")
     public ResponseEntity<byte[]> downloadAgentConfig(
             @PathVariable String agentId,
@@ -245,28 +142,248 @@ public class AgentController {
         headers.setContentDisposition(
                 ContentDisposition
                         .attachment()
-                        .filename("agent.properties")
+                        .filename(
+                                "agent.properties"
+                        )
                         .build()
         );
 
         return ResponseEntity
                 .ok()
                 .headers(headers)
-                .contentType(MediaType.TEXT_PLAIN)
+                .contentType(
+                        MediaType.TEXT_PLAIN
+                )
                 .body(body);
     }
 
 
+    // ============================================================
+    // NEW ORGANIZATION CONFIG API
+    // ============================================================
+
     /**
-     * authentication.getName() resolves to the user's EMAIL
-     * (see UserDetailsImpl.getUsername()), not the Mongo _id.
+     * NEW API.
      *
-     * The real Mongo userId is carried separately as a JWT claim
-     * and attached by JwtAuthenticationFilter via
-     * JwtAuthenticationDetails - pull it from there instead so
-     * Agent.userId stores the actual user id (what
-     * AgentHandshakeInterceptor and AgentRelayService key off of).
+     * GET /api/agents/organization/{agentId}/config
+     *
+     * The organization is resolved from
+     * the authenticated user.
      */
+    @GetMapping(
+            "/organization/{agentId}/config"
+    )
+    public ResponseEntity<byte[]>
+    downloadOrganizationAgentConfig(
+            @PathVariable String agentId,
+            Authentication authentication,
+            HttpServletRequest request
+    ) {
+
+        String userId =
+                extractUserId(authentication);
+
+        Agent agent =
+                agentService
+                        .getOrganizationAgentForUser(
+                                userId,
+                                agentId
+                        );
+
+        byte[] body =
+                buildOrganizationAgentProperties(
+                        agent,
+                        request
+                ).getBytes(
+                        StandardCharsets.UTF_8
+                );
+
+        HttpHeaders headers =
+                new HttpHeaders();
+
+        headers.setContentDisposition(
+                ContentDisposition
+                        .attachment()
+                        .filename(
+                                "agent.properties"
+                        )
+                        .build()
+        );
+
+        return ResponseEntity
+                .ok()
+                .headers(headers)
+                .contentType(
+                        MediaType.TEXT_PLAIN
+                )
+                .body(body);
+    }
+
+
+    // ============================================================
+    // EXISTING AGENT PROPERTIES
+    // ============================================================
+
+    private String buildAgentProperties(
+            Agent agent,
+            HttpServletRequest request
+    ) {
+
+        String backendWsUrl =
+                getBackendWebSocketUrl(
+                        request
+                );
+
+        return "# Generated for agent: "
+                + agent.getAgentName()
+                + "\n\n"
+
+                + "BACKEND_WS_URL="
+                + backendWsUrl
+                + "\n\n"
+
+                + "AGENT_ID="
+                + agent.getAgentId()
+                + "\n\n"
+
+                + "AGENT_KEY="
+                + agent.getAgentKey()
+                + "\n\n"
+
+                + "TALLY_LOCAL_URL=http://localhost:9000\n\n"
+
+                + "AGENT_NAME="
+                + agent.getAgentName()
+                + "\n";
+    }
+
+
+    // ============================================================
+    // NEW ORGANIZATION AGENT PROPERTIES
+    // ============================================================
+
+    private String buildOrganizationAgentProperties(
+            Agent agent,
+            HttpServletRequest request
+    ) {
+
+        String backendWsUrl =
+                getBackendWebSocketUrl(
+                        request
+                );
+
+        return "# Generated for agent: "
+                + agent.getAgentName()
+                + "\n\n"
+
+                + "BACKEND_WS_URL="
+                + backendWsUrl
+                + "\n\n"
+
+                + "AGENT_ID="
+                + agent.getAgentId()
+                + "\n\n"
+
+                + "AGENT_KEY="
+                + agent.getAgentKey()
+                + "\n\n"
+
+                + "ORGANIZATION_ID="
+                + agent.getOrganizationId()
+                + "\n\n"
+
+                + "TALLY_LOCAL_URL=http://localhost:9000\n\n"
+
+                + "AGENT_NAME="
+                + agent.getAgentName()
+                + "\n";
+    }
+
+
+    // ============================================================
+    // WEBSOCKET URL
+    // ============================================================
+
+    private String getBackendWebSocketUrl(
+            HttpServletRequest request
+    ) {
+
+        String forwardedProto =
+                request.getHeader(
+                        "X-Forwarded-Proto"
+                );
+
+        String forwardedHost =
+                request.getHeader(
+                        "X-Forwarded-Host"
+                );
+
+        String scheme;
+
+        String host;
+
+
+        if (forwardedProto != null
+                && !forwardedProto.isBlank()) {
+
+            scheme =
+                    forwardedProto
+                            .split(",")[0]
+                            .trim();
+
+        } else {
+
+            scheme =
+                    request.getScheme();
+        }
+
+
+        if (forwardedHost != null
+                && !forwardedHost.isBlank()) {
+
+            host =
+                    forwardedHost
+                            .split(",")[0]
+                            .trim();
+
+        } else {
+
+            host =
+                    request.getServerName();
+
+            int port =
+                    request.getServerPort();
+
+            if (port != 80
+                    && port != 443) {
+
+                host =
+                        host
+                                + ":"
+                                + port;
+            }
+        }
+
+
+        String wsScheme =
+                "https".equalsIgnoreCase(
+                        scheme
+                )
+                        ? "wss"
+                        : "ws";
+
+
+        return wsScheme
+                + "://"
+                + host
+                + "/agent-ws";
+    }
+
+
+    // ============================================================
+    // JWT USER ID
+    // ============================================================
+
     private String extractUserId(
             Authentication authentication
     ) {
@@ -275,7 +392,8 @@ public class AgentController {
                 authentication.getDetails();
 
         if (details instanceof
-                JwtAuthenticationFilter.JwtAuthenticationDetails
+                JwtAuthenticationFilter
+                        .JwtAuthenticationDetails
                         jwtDetails) {
 
             String userId =
@@ -288,11 +406,6 @@ public class AgentController {
             }
         }
 
-        // Fallback (should not normally happen):
-        // at least don't NPE.
-        // Falling back to the email keeps things self-consistent,
-        // but should be treated as a sign the JWT is missing
-        // the userId claim.
         return authentication.getName();
     }
 }

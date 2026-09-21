@@ -110,6 +110,14 @@ public SecurityFilterChain securityFilterChain(HttpSecurity http) throws Excepti
                     .requestMatchers("/api/user/lookup/all/users/*")
                     .hasAnyAuthority(UserRoles.ALL())
 
+                    .requestMatchers("/api/subscriptions")
+                    .hasAnyAuthority("ADMIN")
+
+                    .requestMatchers("/api/subscriptions/*")
+                    .hasAnyAuthority("ADMIN")
+
+                    
+
                     // Everything else requires authentication
                     .anyRequest()
                     .authenticated()

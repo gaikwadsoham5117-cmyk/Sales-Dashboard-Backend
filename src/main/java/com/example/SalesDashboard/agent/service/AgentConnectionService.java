@@ -22,6 +22,11 @@ public class AgentConnectionService {
     private final Map<String, WebSocketSession> connectedAgents =
             new ConcurrentHashMap<>();
 
+
+    // ============================================================
+    // AGENT CONNECT
+    // ============================================================
+
     public void connectAgent(
             String agentId,
             WebSocketSession session
@@ -32,9 +37,10 @@ public class AgentConnectionService {
                 session
         );
 
-        Agent agent = agentRepository
-                .findByAgentId(agentId)
-                .orElse(null);
+        Agent agent =
+                agentRepository
+                        .findByAgentId(agentId)
+                        .orElse(null);
 
         if (agent != null) {
 
@@ -48,15 +54,23 @@ public class AgentConnectionService {
         }
     }
 
+
+    // ============================================================
+    // AGENT DISCONNECT
+    // ============================================================
+
     public void disconnectAgent(
             String agentId
     ) {
 
-        connectedAgents.remove(agentId);
+        connectedAgents.remove(
+                agentId
+        );
 
-        Agent agent = agentRepository
-                .findByAgentId(agentId)
-                .orElse(null);
+        Agent agent =
+                agentRepository
+                        .findByAgentId(agentId)
+                        .orElse(null);
 
         if (agent != null) {
 
@@ -70,23 +84,42 @@ public class AgentConnectionService {
         }
     }
 
+
+    // ============================================================
+    // GET SESSION
+    // ============================================================
+
     public WebSocketSession getAgentSession(
             String agentId
     ) {
 
-        return connectedAgents.get(agentId);
+        return connectedAgents.get(
+                agentId
+        );
     }
+
+
+    // ============================================================
+    // CHECK CONNECTION
+    // ============================================================
 
     public boolean isAgentConnected(
             String agentId
     ) {
 
         WebSocketSession session =
-                connectedAgents.get(agentId);
+                connectedAgents.get(
+                        agentId
+                );
 
         return session != null
                 && session.isOpen();
     }
+
+
+    // ============================================================
+    // EXISTING USER-BASED LOOKUP
+    // ============================================================
 
     public List<Agent> getAgentsByUserId(
             String userId
@@ -94,6 +127,20 @@ public class AgentConnectionService {
 
         return agentRepository.findByUserId(
                 userId
+        );
+    }
+
+
+    // ============================================================
+    // NEW ORGANIZATION-BASED LOOKUP
+    // ============================================================
+
+    public List<Agent> getAgentsByOrganizationId(
+            String organizationId
+    ) {
+
+        return agentRepository.findByOrganizationId(
+                organizationId
         );
     }
 }
