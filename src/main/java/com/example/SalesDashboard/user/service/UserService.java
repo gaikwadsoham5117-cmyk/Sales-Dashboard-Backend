@@ -1,6 +1,9 @@
 package com.example.SalesDashboard.user.service;
 
 import com.example.SalesDashboard.framework.model.UserRoles;
+import com.example.SalesDashboard.organization.entity.BusinessOrganization;
+import com.example.SalesDashboard.organization.repository.BusinessOrganizationRepository;
+import com.example.SalesDashboard.user.command.OwnerCreateRequest;
 import com.example.SalesDashboard.user.command.ResetPasswordCommand;
 import com.example.SalesDashboard.user.command.UserRegisterCommand;
 import com.example.SalesDashboard.user.command.UserUpdateCommand;
@@ -22,6 +25,9 @@ import org.springframework.mail.javamail.JavaMailSender;
 import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.stereotype.Service;
 import org.springframework.web.server.ResponseStatusException;
+import com.example.SalesDashboard.subscription.entity.Subscription;
+import com.example.SalesDashboard.subscription.repository.SubscriptionRepository;
+import com.example.SalesDashboard.user.command.EmployeeCreateRequest;
 
 import java.util.Date;
 import java.util.List;
@@ -33,22 +39,21 @@ import java.util.UUID;
 public class UserService {
 
     private final UserRepository userRepository;
-
+    private final BusinessOrganizationRepository organizationRepository;
     private final PasswordEncoder passwordEncoder;
-
     private final JavaMailSender mailSender;
-
     private final ObjectMapper objectMapper;
+    private final SubscriptionRepository subscriptionRepository;
 
 
     // =========================================================
     // REGISTER USER
     // =========================================================
 
-    public UserRegisterCommand registerUser(UserRegisterCommand request) {
+    public UserRegisterCommand registerUser(
+            UserRegisterCommand request) {
 
         if (userRepository.existsByEmail(request.getEmail())) {
-
             throw new UserAlreadyExistException(
                     "Email already in use: " + request.getEmail()
             );
@@ -66,6 +71,7 @@ public class UserService {
 
         User newUser = User.builder()
 
+                // Generate UUID automatically
                 .id(UUID.randomUUID().toString())
 
                 .email(request.getEmail())
@@ -77,36 +83,24 @@ public class UserService {
                 )
 
                 .firstName(request.getFirstName())
-
                 .lastName(request.getLastName())
-
                 .mobile(request.getMobile())
-
                 .address(request.getAddress())
 
+                // Normal public user
                 .roles(UserRoles.USER)
 
-                /*
-                 * NEW SUBSCRIPTION FLOW
-                 *
-                 * Every newly registered user gets
-                 * 15 days free trial.
-                 */
+                // Start 15-day trial
                 .status(UserStatus.TRIAL)
 
                 /*
-                 * Existing registration date.
+                 * Organization will be assigned later
+                 * through the Owner / Employee flow.
                  */
+                .organizationId(null)
+
                 .createdOn(now)
-
-                /*
-                 * Subscription/trial start date.
-                 */
                 .createdAt(now)
-
-                /*
-                 * Initial status update time.
-                 */
                 .statusUpdatedAt(now)
 
                 .build();
@@ -117,15 +111,12 @@ public class UserService {
         return UserRegisterCommand.builder()
 
                 .email(newUser.getEmail())
-
                 .firstName(newUser.getFirstName())
-
                 .lastName(newUser.getLastName())
-
                 .mobile(newUser.getMobile())
-
                 .address(newUser.getAddress())
 
+                // Never return password
                 .password(null)
 
                 .message(
@@ -138,6 +129,135 @@ public class UserService {
                 .build();
     }
 
+public UserResponseDTO createOwner(OwnerCreateRequest request) {
+
+    // -----------------------------------------------------
+    // Validate email
+    // -----------------------------------------------------
+
+    if (request.getEmail() == null
+            || request.getEmail().isBlank()) {
+
+        throw new ResponseStatusException(
+                HttpStatus.BAD_REQUEST,
+                "Email is required"
+        );
+    }
+
+
+    // -----------------------------------------------------
+    // Check duplicate email
+    // -----------------------------------------------------
+
+    if (userRepository.existsByEmail(request.getEmail())) {
+
+        throw new ResponseStatusException(
+                HttpStatus.CONFLICT,
+                "Email already in use: "
+                        + request.getEmail()
+        );
+    }
+
+
+    // -----------------------------------------------------
+    // Validate password
+    // -----------------------------------------------------
+
+    if (request.getPassword() == null
+            || request.getPassword().length() < 6) {
+
+        throw new ResponseStatusException(
+                HttpStatus.BAD_REQUEST,
+                "Password must be at least 6 characters long"
+        );
+    }
+
+
+    // -----------------------------------------------------
+    // Validate organization ID
+    // -----------------------------------------------------
+
+    if (request.getOrganizationId() == null
+            || request.getOrganizationId().isBlank()) {
+
+        throw new ResponseStatusException(
+                HttpStatus.BAD_REQUEST,
+                "Organization ID is required"
+        );
+    }
+
+
+    // -----------------------------------------------------
+    // Check organization exists
+    // -----------------------------------------------------
+
+    BusinessOrganization organization =
+            organizationRepository.findById(
+                    request.getOrganizationId()
+            ).orElseThrow(() ->
+                    new ResponseStatusException(
+                            HttpStatus.NOT_FOUND,
+                            "Organization not found: "
+                                    + request.getOrganizationId()
+                    )
+            );
+
+
+    // -----------------------------------------------------
+    // Create Owner
+    // -----------------------------------------------------
+
+    Date now = new Date();
+
+    User owner = User.builder()
+
+            // Generate Owner UUID
+            .id(UUID.randomUUID().toString())
+
+            .email(request.getEmail())
+
+            .password(
+                    passwordEncoder.encode(
+                            request.getPassword()
+                    )
+            )
+
+            .firstName(request.getFirstName())
+            .lastName(request.getLastName())
+            .mobile(request.getMobile())
+            .address(request.getAddress())
+
+            // Backend controls the role
+            .roles(UserRoles.OWNER)
+
+            // Owner starts with trial
+            .status(UserStatus.TRIAL)
+
+            // Organization mapping
+            .organizationId(organization.getId())
+
+            .createdOn(now)
+            .createdAt(now)
+            .statusUpdatedAt(now)
+
+            .build();
+
+
+    // -----------------------------------------------------
+    // Save Owner
+    // -----------------------------------------------------
+
+    User savedOwner = userRepository.save(owner);
+
+
+    // -----------------------------------------------------
+    // Return safe response
+    // Password is NOT returned
+    // -----------------------------------------------------
+
+    return new UserResponseDTO(savedOwner);
+}
+
 
     // =========================================================
     // UPDATE USER
@@ -149,7 +269,6 @@ public class UserService {
     ) {
 
         User user = userRepository.findById(id)
-
                 .orElseThrow(
                         () -> new ResponseStatusException(
                                 HttpStatus.NOT_FOUND,
@@ -192,7 +311,6 @@ public class UserService {
                 // =====================================================
 
                 case "firstName" ->
-
                         user.setFirstName(
                                 (String) value
                         );
@@ -203,7 +321,6 @@ public class UserService {
                 // =====================================================
 
                 case "lastName" ->
-
                         user.setLastName(
                                 (String) value
                         );
@@ -214,7 +331,6 @@ public class UserService {
                 // =====================================================
 
                 case "mobile" ->
-
                         user.setMobile(
                                 (String) value
                         );
@@ -225,8 +341,17 @@ public class UserService {
                 // =====================================================
 
                 case "address" ->
-
                         user.setAddress(
+                                (String) value
+                        );
+
+
+                // =====================================================
+                // ORGANIZATION ID
+                // =====================================================
+
+                case "organizationId" ->
+                        user.setOrganizationId(
                                 (String) value
                         );
 
@@ -281,9 +406,10 @@ public class UserService {
                          *
                          * UNPAID -> PAID
                          *
-                         * statusUpdatedAt becomes the payment
-                         * date/time.
+                         * statusUpdatedAt becomes the
+                         * payment date/time.
                          */
+
                         if (user.getStatus() != newStatus) {
 
                             user.setStatus(
@@ -293,7 +419,6 @@ public class UserService {
                             user.setStatusUpdatedAt(
                                     new Date()
                             );
-
                         }
 
                     } catch (IllegalArgumentException e) {
@@ -311,7 +436,6 @@ public class UserService {
                 // =====================================================
 
                 default ->
-
                         throw new ResponseStatusException(
                                 HttpStatus.BAD_REQUEST,
                                 "Invalid field: " + key
@@ -384,7 +508,6 @@ public class UserService {
 
         User user =
                 userRepository.findByEmail(email)
-
                         .orElseThrow(
                                 () -> new ResponseStatusException(
                                         HttpStatus.NOT_FOUND,
@@ -459,7 +582,6 @@ public class UserService {
                 userRepository.findByEmail(
                         request.getEmail()
                 )
-
                         .orElseThrow(
                                 () -> new ResponseStatusException(
                                         HttpStatus.NOT_FOUND,
@@ -535,4 +657,260 @@ public class UserService {
                 "User not found"
         );
     }
+
+    public UserResponseDTO createEmployee(
+        String ownerUserId,
+        EmployeeCreateRequest request
+) {
+
+    // -----------------------------------------------------
+    // Find authenticated Owner
+    // -----------------------------------------------------
+
+    User owner = userRepository.findById(ownerUserId)
+            .orElseThrow(() ->
+                    new ResponseStatusException(
+                            HttpStatus.NOT_FOUND,
+                            "Owner not found"
+                    )
+            );
+
+
+    // -----------------------------------------------------
+    // Verify role
+    // -----------------------------------------------------
+
+    if (owner.getRoles() != UserRoles.OWNER) {
+
+        throw new ResponseStatusException(
+                HttpStatus.FORBIDDEN,
+                "Only an Owner can create employees"
+        );
+    }
+
+
+    // -----------------------------------------------------
+    // Verify organization
+    // -----------------------------------------------------
+
+    String organizationId = owner.getOrganizationId();
+
+    if (organizationId == null || organizationId.isBlank()) {
+
+        throw new ResponseStatusException(
+                HttpStatus.BAD_REQUEST,
+                "Owner is not associated with an organization"
+        );
+    }
+
+
+    // -----------------------------------------------------
+    // Verify Owner account status
+    // -----------------------------------------------------
+
+    if (owner.getStatus() == UserStatus.UNPAID
+            || owner.getStatus() == UserStatus.INACTIVE) {
+
+        throw new ResponseStatusException(
+                HttpStatus.FORBIDDEN,
+                "Your subscription is inactive or expired"
+        );
+    }
+
+
+    // -----------------------------------------------------
+    // Check duplicate email
+    // -----------------------------------------------------
+
+    if (userRepository.existsByEmail(request.getEmail())) {
+
+        throw new ResponseStatusException(
+                HttpStatus.CONFLICT,
+                "Email already in use: " + request.getEmail()
+        );
+    }
+
+
+    // -----------------------------------------------------
+    // Find Organization
+    // -----------------------------------------------------
+
+    BusinessOrganization organization =
+            organizationRepository.findById(organizationId)
+                    .orElseThrow(() ->
+                            new ResponseStatusException(
+                                    HttpStatus.NOT_FOUND,
+                                    "Organization not found"
+                            )
+                    );
+
+
+    // -----------------------------------------------------
+    // Verify subscription
+    // -----------------------------------------------------
+
+    if (organization.getSubscriptionId() == null
+            || organization.getSubscriptionId().isBlank()) {
+
+        throw new ResponseStatusException(
+                HttpStatus.FORBIDDEN,
+                "No subscription is assigned to this organization"
+        );
+    }
+
+
+    Subscription subscription =
+            subscriptionRepository.findById(
+                    organization.getSubscriptionId()
+            ).orElseThrow(() ->
+                    new ResponseStatusException(
+                            HttpStatus.NOT_FOUND,
+                            "Subscription not found"
+                    )
+            );
+
+
+    // -----------------------------------------------------
+    // Verify subscription status
+    // -----------------------------------------------------
+
+    String subscriptionStatus = subscription.getStatus();
+
+    if (subscriptionStatus == null
+            || subscriptionStatus.isBlank()) {
+
+        throw new ResponseStatusException(
+                HttpStatus.FORBIDDEN,
+                "Subscription status is not configured"
+        );
+    }
+
+
+    String normalizedStatus =
+            subscriptionStatus.trim().toUpperCase();
+
+
+    /*
+     * Your current system uses subscription status as String.
+     *
+     * Allow:
+     * TRIAL
+     * ACTIVE
+     * PAID
+     *
+     * Block everything else.
+     */
+
+    if (!normalizedStatus.equals("TRIAL")
+            && !normalizedStatus.equals("ACTIVE")
+            && !normalizedStatus.equals("PAID")) {
+
+        throw new ResponseStatusException(
+                HttpStatus.FORBIDDEN,
+                "Your subscription is not active"
+        );
+    }
+
+
+    // -----------------------------------------------------
+    // Validate max users
+    // -----------------------------------------------------
+
+    if (subscription.getMaxUsers() == null
+            || subscription.getMaxUsers() <= 0) {
+
+        throw new ResponseStatusException(
+                HttpStatus.FORBIDDEN,
+                "Invalid user limit configured for this subscription"
+        );
+    }
+
+
+    // -----------------------------------------------------
+    // Count current organization users
+    //
+    // IMPORTANT:
+    // This includes Owner + Employees.
+    // -----------------------------------------------------
+
+    long currentUsers =
+            userRepository.countByOrganizationId(
+                    organizationId
+            );
+
+
+    // -----------------------------------------------------
+    // Check subscription limit
+    // -----------------------------------------------------
+
+    if (currentUsers >= subscription.getMaxUsers()) {
+
+        throw new ResponseStatusException(
+                HttpStatus.FORBIDDEN,
+                "User limit reached for your subscription. "
+                        + "Maximum allowed users: "
+                        + subscription.getMaxUsers()
+        );
+    }
+
+
+    // -----------------------------------------------------
+    // Create Employee
+    // -----------------------------------------------------
+
+    Date now = new Date();
+
+    User employee = User.builder()
+
+            .id(UUID.randomUUID().toString())
+
+            .email(request.getEmail())
+
+            .password(
+                    passwordEncoder.encode(
+                            request.getPassword()
+                    )
+            )
+
+            .firstName(request.getFirstName())
+
+            .lastName(request.getLastName())
+
+            .mobile(request.getMobile())
+
+            .address(request.getAddress())
+
+            // Backend controls role
+            .roles(UserRoles.EMPLOYEE)
+
+            // Employee follows organization lifecycle
+            .status(owner.getStatus())
+
+            // IMPORTANT:
+            // Automatically inherit Owner organization
+            .organizationId(organizationId)
+
+            .createdOn(now)
+
+            .createdAt(now)
+
+            .statusUpdatedAt(now)
+
+            .build();
+
+
+    // -----------------------------------------------------
+    // Save Employee
+    // -----------------------------------------------------
+
+    User savedEmployee =
+            userRepository.save(employee);
+
+
+    // -----------------------------------------------------
+    // Return safe response
+    // -----------------------------------------------------
+
+    return new UserResponseDTO(savedEmployee);
+}
 }

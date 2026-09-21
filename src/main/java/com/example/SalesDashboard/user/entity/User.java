@@ -40,26 +40,11 @@ public class User {
 
     private UserStatus status;
 
-    /*
-     * Existing field.
-     * Keep this because existing code already uses createdOn.
-     */
+    private String organizationId;
+
     private Date createdOn;
 
-    /*
-     * Subscription/trial creation date.
-     *
-     * For a new user:
-     * createdAt = registration date/time
-     */
     private Date createdAt;
 
-    /*
-     * Last subscription status change.
-     *
-     * TRIAL  -> initial registration time
-     * UNPAID -> when trial/subscription expires
-     * PAID   -> when admin activates/renews subscription
-     */
     private Date statusUpdatedAt;
 }

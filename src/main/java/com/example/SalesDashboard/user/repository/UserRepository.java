@@ -2,6 +2,7 @@ package com.example.SalesDashboard.user.repository;
 
 import com.example.SalesDashboard.user.entity.User;
 import com.example.SalesDashboard.user.entity.UserStatus;
+import com.example.SalesDashboard.framework.model.UserRoles;
 
 import org.springframework.data.mongodb.repository.Aggregation;
 import org.springframework.data.mongodb.repository.MongoRepository;
@@ -44,4 +45,13 @@ public interface UserRepository extends MongoRepository<User, String> {
             UserStatus status,
             Date date
     );
+
+    List<User> findByOrganizationId(String organizationId);
+
+long countByOrganizationId(String organizationId);
+
+List<User> findByOrganizationIdAndRoles(
+        String organizationId,
+        UserRoles roles
+);
 }

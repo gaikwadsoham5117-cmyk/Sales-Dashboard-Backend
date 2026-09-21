@@ -12,6 +12,12 @@ import jakarta.validation.Valid;
 import lombok.RequiredArgsConstructor;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
+import com.example.SalesDashboard.user.command.OwnerCreateRequest;
+import com.example.SalesDashboard.framework.security.JwtAuthenticationFilter;
+import com.example.SalesDashboard.user.command.EmployeeCreateRequest;
+import com.example.SalesDashboard.user.exception.UserNotAuthenticatedException;
+
+import org.springframework.security.core.Authentication;
 
 import java.util.List;
 import java.util.Optional;
@@ -79,4 +85,76 @@ public class UserController {
         return userService.findAllUsersById(id);
     }
 
+    @PostMapping("/api/owners/register")
+public ResponseEntity<UserResponseDTO> createOwner(
+        @Valid @RequestBody OwnerCreateRequest request) {
+
+    return ResponseEntity.ok(
+            userService.createOwner(request)
+    );
+}
+
+@PostMapping("/api/employees/register")
+public ResponseEntity<UserResponseDTO> createEmployee(
+        @Valid @RequestBody EmployeeCreateRequest request,
+        Authentication authentication
+) {
+
+    String ownerUserId =
+            extractUserId(authentication);
+
+    return ResponseEntity.ok(
+            userService.createEmployee(
+                    ownerUserId,
+                    request
+            )
+    );
+}
+
+private String extractUserId(
+        Authentication authentication
+) {
+
+    if (authentication == null
+            || !authentication.isAuthenticated()) {
+
+        throw new UserNotAuthenticatedException(
+                "Authentication is required"
+        );
+    }
+
+
+    Object details =
+            authentication.getDetails();
+
+
+    if (details instanceof
+            JwtAuthenticationFilter.JwtAuthenticationDetails jwtDetails) {
+
+        String userId =
+                jwtDetails.getUserId();
+
+        if (userId != null
+                && !userId.isBlank()) {
+
+            return userId;
+        }
+    }
+
+
+    String authenticationName =
+            authentication.getName();
+
+
+    if (authenticationName == null
+            || authenticationName.isBlank()) {
+
+        throw new UserNotAuthenticatedException(
+                "Unable to determine authenticated user"
+        );
+    }
+
+
+    return authenticationName;
+}
 }
