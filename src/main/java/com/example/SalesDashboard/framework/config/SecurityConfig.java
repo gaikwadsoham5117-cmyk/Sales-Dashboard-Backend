@@ -116,9 +116,6 @@ public SecurityFilterChain securityFilterChain(HttpSecurity http) throws Excepti
                     .requestMatchers("/api/subscriptions/*")
                     .hasAnyAuthority("ADMIN")
 
-                    
-
-                    // Everything else requires authentication
                     .anyRequest()
                     .authenticated()
             )

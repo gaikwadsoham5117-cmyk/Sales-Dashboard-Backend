@@ -5,9 +5,7 @@ import com.example.SalesDashboard.tally.Company.dto.CompanyDto;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.node.ObjectNode;
-
 import lombok.RequiredArgsConstructor;
-
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Service;
@@ -21,7 +19,8 @@ import java.util.Map;
 @RequiredArgsConstructor
 public class CompanyService {
 
-    private static final String COMPANY_COLLECTION_ID = "List of Companies";
+    private static final String COMPANY_COLLECTION_ID =
+            "List of Companies";
 
     private final ObjectMapper objectMapper;
     private final AgentRelayService agentRelayService;
@@ -29,16 +28,25 @@ public class CompanyService {
     @Value("${tally.import-format:jsonex}")
     private String tallyExportFormat;
 
+    // ============================================================
+    // GET COMPANIES
+    // ============================================================
+
     public List<CompanyDto> pullAllCompanies(String userId) {
 
         ObjectNode payload = buildExportPayload();
 
         Map<String, String> headers = Map.of(
-                "Content-Type", "application/json",
-                "version", "1",
-                "tallyrequest", "export",
-                "type", "collection",
-                "id", COMPANY_COLLECTION_ID
+                "Content-Type",
+                "application/json",
+                "version",
+                "1",
+                "tallyrequest",
+                "export",
+                "type",
+                "collection",
+                "id",
+                COMPANY_COLLECTION_ID
         );
 
         String jsonBody;
@@ -55,14 +63,22 @@ public class CompanyService {
         AgentRelayService.RelayResponse response;
 
         try {
+            /*
+             * Agent selection is handled inside AgentRelayService
+             * using the authenticated user's organization.
+             *
+             * No agentId is required from the frontend.
+             */
             response = agentRelayService.relay(
                     userId,
                     "POST",
                     headers,
                     jsonBody
             );
+
         } catch (ResponseStatusException e) {
             throw e;
+
         } catch (Exception e) {
             throw new ResponseStatusException(
                     HttpStatus.BAD_GATEWAY,
@@ -77,16 +93,21 @@ public class CompanyService {
             );
         }
 
-        if (response.status() < 200 || response.status() >= 300) {
+        if (response.status() < 200
+                || response.status() >= 300) {
+
             throw new ResponseStatusException(
                     HttpStatus.BAD_GATEWAY,
-                    "Tally Agent returned HTTP status " + response.status()
+                    "Tally Agent returned HTTP status "
+                            + response.status()
             );
         }
 
         String rawResponse = response.body();
 
-        if (rawResponse == null || rawResponse.isBlank()) {
+        if (rawResponse == null
+                || rawResponse.isBlank()) {
+
             throw new ResponseStatusException(
                     HttpStatus.BAD_GATEWAY,
                     "Empty response received from Tally"
@@ -96,30 +117,45 @@ public class CompanyService {
         return parseCompanyCollection(rawResponse);
     }
 
+    // ============================================================
+    // PAYLOAD
+    // ============================================================
 
     private ObjectNode buildExportPayload() {
 
         ObjectNode staticVariable =
                 objectMapper.createObjectNode();
 
-        staticVariable.put("name", "svExportFormat");
-        staticVariable.put("value", tallyExportFormat);
+        staticVariable.put(
+                "name",
+                "svExportFormat"
+        );
+
+        staticVariable.put(
+                "value",
+                tallyExportFormat
+        );
 
         ObjectNode root =
                 objectMapper.createObjectNode();
 
-        root.putArray("static_variables")
-                .add(staticVariable);
+        root.putArray(
+                "static_variables"
+        ).add(staticVariable);
 
         return root;
     }
 
+    // ============================================================
+    // PARSE
+    // ============================================================
 
     private List<CompanyDto> parseCompanyCollection(
             String rawJson
     ) {
 
-        List<CompanyDto> results = new ArrayList<>();
+        List<CompanyDto> results =
+                new ArrayList<>();
 
         try {
 
@@ -127,7 +163,8 @@ public class CompanyService {
                     objectMapper.readTree(rawJson);
 
             JsonNode collection =
-                    root.path("data").path("collection");
+                    root.path("data")
+                            .path("collection");
 
             if (!collection.isArray()) {
 
@@ -139,23 +176,25 @@ public class CompanyService {
 
             for (JsonNode companyNode : collection) {
 
-                String name = firstNonBlank(
-                        textOrNull(
-                                companyNode
-                                        .path("metadata")
-                                        .path("name")
-                        ),
+                String name =
+                        firstNonBlank(
+                                textOrNull(
+                                        companyNode
+                                                .path("metadata")
+                                                .path("name")
+                                ),
 
-                        textOrNull(
-                                companyNode
-                                        .path("name")
-                                        .path("value")
-                        ),
+                                textOrNull(
+                                        companyNode
+                                                .path("name")
+                                                .path("value")
+                                ),
 
-                        textOrNull(
-                                companyNode.path("name")
-                        )
-                );
+                                textOrNull(
+                                        companyNode
+                                                .path("name")
+                                )
+                        );
 
                 if (name != null) {
 
@@ -180,11 +219,19 @@ public class CompanyService {
         }
     }
 
-    private String firstNonBlank(String... values) {
+    // ============================================================
+    // HELPERS
+    // ============================================================
+
+    private String firstNonBlank(
+            String... values
+    ) {
 
         for (String value : values) {
 
-            if (value != null && !value.isBlank()) {
+            if (value != null
+                    && !value.isBlank()) {
+
                 return value.trim();
             }
         }
@@ -192,18 +239,23 @@ public class CompanyService {
         return null;
     }
 
-    private String textOrNull(JsonNode node) {
+    private String textOrNull(
+            JsonNode node
+    ) {
 
-        if (node == null ||
-                node.isMissingNode() ||
-                node.isNull()) {
+        if (node == null
+                || node.isMissingNode()
+                || node.isNull()) {
 
             return null;
         }
 
-        String text = node.asText();
+        String text =
+                node.asText();
 
-        if (text == null || text.isBlank()) {
+        if (text == null
+                || text.isBlank()) {
+
             return null;
         }
 

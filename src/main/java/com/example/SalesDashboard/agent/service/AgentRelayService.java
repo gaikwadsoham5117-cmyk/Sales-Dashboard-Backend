@@ -3,14 +3,11 @@ package com.example.SalesDashboard.agent.service;
 import com.example.SalesDashboard.agent.entity.Agent;
 import com.example.SalesDashboard.user.entity.User;
 import com.example.SalesDashboard.user.repository.UserRepository;
-
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.node.ObjectNode;
-
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
-
 import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Service;
 import org.springframework.web.server.ResponseStatusException;
@@ -24,28 +21,6 @@ import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ExecutionException;
 import java.util.concurrent.TimeoutException;
 
-/**
- * Relays Tally requests from the authenticated user to the
- * Tally Agent belonging to that user's organization.
- *
- * Flow:
- *
- * Owner/Employee
- *      ↓
- * JWT
- *      ↓
- * userId
- *      ↓
- * User.organizationId
- *      ↓
- * Agent.organizationId
- *      ↓
- * Connected Agent WebSocket
- *      ↓
- * Tally Agent
- *      ↓
- * TallyPrime
- */
 @Slf4j
 @Service
 @RequiredArgsConstructor
@@ -55,18 +30,34 @@ public class AgentRelayService {
     private final PendingRequestRegistry pendingRequestRegistry;
     private final UserRepository userRepository;
 
-    private final ObjectMapper mapper = new ObjectMapper();
+    private final ObjectMapper mapper =
+            new ObjectMapper();
 
-    public record RelayResponse(int status, String body) {}
+    public record RelayResponse(
+            int status,
+            String body
+    ) {
+    }
 
-    /**
-     * Relay a Tally request to the connected Agent
-     * belonging to the authenticated user's organization.
+    // ============================================================
+    // MAIN RELAY - AUTOMATIC AGENT SELECTION
+    // ============================================================
+    /*
+     * Used by APIs such as:
      *
-     * @param userId  MongoDB ID of authenticated user
-     * @param method  HTTP method to use against Tally
-     * @param headers headers to forward to Tally
-     * @param body    raw Tally request body
+     * GET /api/company/all
+     *
+     * Frontend sends ONLY JWT.
+     *
+     * JWT
+     *   ↓
+     * userId
+     *   ↓
+     * organizationId
+     *   ↓
+     * connected Tally Agent
+     *   ↓
+     * Tally PC
      */
     public RelayResponse relay(
             String userId,
@@ -75,19 +66,99 @@ public class AgentRelayService {
             String body
     ) {
 
-        /*
-         * Find Agent using:
-         *
-         * userId
-         *    ↓
-         * organizationId
-         *    ↓
-         * Agent
-         *    ↓
-         * WebSocket session
-         */
+        AgentSelection selection =
+                findConnectedAgent(userId);
+
+        return sendRequestToAgent(
+                userId,
+                selection.organizationId(),
+                selection.agent(),
+                selection.session(),
+                method,
+                headers,
+                body
+        );
+    }
+
+    // ============================================================
+    // EXACT AGENT RELAY
+    // ============================================================
+    /*
+     * This method is kept for APIs that specifically need
+     * an agentId.
+     *
+     * It is NOT used by /api/company/all.
+     */
+    public RelayResponse relay(
+            String userId,
+            String agentId,
+            String method,
+            Map<String, String> headers,
+            String body
+    ) {
+
         WebSocketSession session =
-                findConnectedAgentSession(userId);
+                findConnectedAgentSession(
+                        userId,
+                        agentId
+                );
+
+        User user =
+                userRepository
+                        .findById(userId)
+                        .orElseThrow(() ->
+                                new ResponseStatusException(
+                                        HttpStatus.NOT_FOUND,
+                                        "User not found"
+                                )
+                        );
+
+        Agent agent =
+                agentConnectionService
+                        .getAgentsByOrganizationId(
+                                user.getOrganizationId()
+                        )
+                        .stream()
+                        .filter(a ->
+                                agentId.equals(
+                                        a.getAgentId()
+                                )
+                        )
+                        .findFirst()
+                        .orElseThrow(() ->
+                                new ResponseStatusException(
+                                        HttpStatus.NOT_FOUND,
+                                        "Tally Agent not found"
+                                )
+                        );
+
+        return sendRequestToAgent(
+                userId,
+                user.getOrganizationId(),
+                agent,
+                session,
+                method,
+                headers,
+                body
+        );
+    }
+
+    // ============================================================
+    // SEND REQUEST TO AGENT
+    // ============================================================
+
+    private RelayResponse sendRequestToAgent(
+            String userId,
+            String organizationId,
+            Agent agent,
+            WebSocketSession session,
+            String method,
+            Map<String, String> headers,
+            String body
+    ) {
+
+        String agentId =
+                agent.getAgentId();
 
         String requestId =
                 UUID.randomUUID().toString();
@@ -107,37 +178,73 @@ public class AgentRelayService {
 
         request.put(
                 "method",
-                method == null ? "POST" : method
+                method == null
+                        ? "POST"
+                        : method
         );
 
         request.put(
                 "body",
-                body
+                body == null
+                        ? ""
+                        : body
         );
 
         ObjectNode headersNode =
-                request.putObject("headers");
+                request.putObject(
+                        "headers"
+                );
 
         if (headers != null) {
-            headers.forEach(headersNode::put);
+            headers.forEach(
+                    headersNode::put
+            );
         }
 
         /*
-         * Register request before sending it.
-         *
-         * Agent response will complete this Future
-         * using the same requestId.
+         * Register BEFORE sending the request.
          */
         CompletableFuture<JsonNode> future =
-                pendingRequestRegistry.register(requestId);
+                pendingRequestRegistry.register(
+                        requestId
+                );
 
         try {
 
+            if (!session.isOpen()) {
+
+                pendingRequestRegistry.fail(
+                        requestId,
+                        new IllegalStateException(
+                                "Agent WebSocket is closed"
+                        )
+                );
+
+                throw new ResponseStatusException(
+                        HttpStatus.SERVICE_UNAVAILABLE,
+                        "Tally Agent is offline"
+                );
+            }
+
+            log.info(
+                    "TALLY ROUTING | userId={} | organizationId={} | agentId={} | agentName={}",
+                    userId,
+                    organizationId,
+                    agentId,
+                    agent.getAgentName()
+            );
+
             session.sendMessage(
                     new TextMessage(
-                            mapper.writeValueAsString(request)
+                            mapper.writeValueAsString(
+                                    request
+                            )
                     )
             );
+
+        } catch (ResponseStatusException e) {
+
+            throw e;
 
         } catch (Exception e) {
 
@@ -157,28 +264,29 @@ public class AgentRelayService {
 
         try {
 
-            /*
-             * Wait for the Agent response.
-             */
-            response = future.get();
+            response =
+                    future.get();
 
         } catch (ExecutionException e) {
 
-            if (e.getCause() instanceof TimeoutException) {
+            Throwable cause =
+                    e.getCause();
+
+            if (cause instanceof TimeoutException) {
 
                 throw new ResponseStatusException(
                         HttpStatus.GATEWAY_TIMEOUT,
-                        "Tally Agent did not respond in time. "
-                                + "Ensure TallyPrime and "
-                                + "TallyAPIConnectorV2.0.exe "
-                                + "are running on the client PC."
+                        "Tally Agent did not respond "
+                                + "within 20 seconds. "
+                                + "Check TallyPrime and the "
+                                + "Tally Agent on that PC."
                 );
             }
 
             throw new ResponseStatusException(
                     HttpStatus.BAD_GATEWAY,
                     "Error waiting for Tally Agent response: "
-                            + e.getMessage()
+                            + cause.getMessage()
             );
 
         } catch (InterruptedException e) {
@@ -192,27 +300,34 @@ public class AgentRelayService {
             );
         }
 
-        /*
-         * Check Agent response.
-         */
+        // ========================================================
+        // AGENT RESPONSE
+        // ========================================================
+
         boolean ok =
-                response.path("ok").asBoolean(false);
+                response.path("ok")
+                        .asBoolean(false);
 
         if (!ok) {
 
             String error =
                     response.path("error")
-                            .asText("Unknown agent error");
+                            .asText(
+                                    "Unknown agent error"
+                            );
 
             log.warn(
-                    "Agent relay failed for organization user {}: {}",
+                    "Agent relay failed | userId={} | organizationId={} | agentId={} | error={}",
                     userId,
+                    organizationId,
+                    agentId,
                     error
             );
 
             throw new ResponseStatusException(
                     HttpStatus.BAD_GATEWAY,
-                    "Tally Agent error: " + error
+                    "Tally Agent error: "
+                            + error
             );
         }
 
@@ -230,25 +345,11 @@ public class AgentRelayService {
         );
     }
 
-    /**
-     * Finds the connected Tally Agent through the
-     * authenticated user's organization.
-     *
-     * Flow:
-     *
-     * userId
-     *    ↓
-     * User
-     *    ↓
-     * organizationId
-     *    ↓
-     * Agents
-     *    ↓
-     * connected Agent
-     *    ↓
-     * WebSocket session
-     */
-    private WebSocketSession findConnectedAgentSession(
+    // ============================================================
+    // AUTOMATIC AGENT SELECTION
+    // ============================================================
+
+    private AgentSelection findConnectedAgent(
             String userId
     ) {
 
@@ -256,7 +357,8 @@ public class AgentRelayService {
          * 1. Find authenticated user.
          */
         User user =
-                userRepository.findById(userId)
+                userRepository
+                        .findById(userId)
                         .orElseThrow(() ->
                                 new ResponseStatusException(
                                         HttpStatus.NOT_FOUND,
@@ -265,11 +367,7 @@ public class AgentRelayService {
                         );
 
         /*
-         * 2. Get organization ID from user.
-         *
-         * IMPORTANT:
-         * We do NOT accept organizationId from
-         * the frontend/request.
+         * 2. Get organization from user.
          */
         String organizationId =
                 user.getOrganizationId();
@@ -284,8 +382,7 @@ public class AgentRelayService {
         }
 
         /*
-         * 3. Find all Agents belonging to
-         *    this organization.
+         * 3. Get all agents belonging to this organization.
          */
         List<Agent> agents =
                 agentConnectionService
@@ -293,60 +390,208 @@ public class AgentRelayService {
                                 organizationId
                         );
 
-        if (agents.isEmpty()) {
+        if (agents == null
+                || agents.isEmpty()) {
 
             throw new ResponseStatusException(
-                    HttpStatus.SERVICE_UNAVAILABLE,
-                    "No Tally Agent has been set up "
-                            + "for this organization yet. "
-                            + "Download and run the agent first."
+                    HttpStatus.NOT_FOUND,
+                    "No Tally Agent found for your organization"
             );
         }
 
         /*
-         * 4. Find a connected Agent.
+         * 4. Find a REAL connected agent.
          *
-         * If an organization has multiple Agents,
-         * the first currently connected Agent is used.
+         * We do NOT trust the MongoDB status field here.
+         * The WebSocket connection is the source of truth.
          */
         for (Agent agent : agents) {
 
+            String agentId =
+                    agent.getAgentId();
+
+            if (agentId == null
+                    || agentId.isBlank()) {
+
+                continue;
+            }
+
+            if (!organizationId.equals(
+                    agent.getOrganizationId()
+            )) {
+
+                continue;
+            }
+
             if (agentConnectionService
-                    .isAgentConnected(
-                            agent.getAgentId()
-                    )) {
+                    .isAgentConnected(agentId)) {
 
                 WebSocketSession session =
                         agentConnectionService
                                 .getAgentSession(
-                                        agent.getAgentId()
+                                        agentId
                                 );
 
                 if (session != null
                         && session.isOpen()) {
 
-                    log.debug(
-                            "Routing Tally request | userId={} | organizationId={} | agentId={}",
+                    log.info(
+                            "AUTO TALLY ROUTING | userId={} | organizationId={} | agentId={} | agentName={}",
                             userId,
                             organizationId,
-                            agent.getAgentId()
+                            agentId,
+                            agent.getAgentName()
                     );
 
-                    return session;
+                    return new AgentSelection(
+                            organizationId,
+                            agent,
+                            session
+                    );
                 }
             }
         }
 
         /*
-         * 5. Organization has Agent(s),
-         *    but none are connected.
+         * No connected agent was found.
          */
         throw new ResponseStatusException(
                 HttpStatus.SERVICE_UNAVAILABLE,
-                "Your organization's Tally Agent is "
-                        + "currently offline. "
-                        + "Make sure it is running on "
-                        + "the PC with TallyPrime."
+                "No connected Tally Agent found for your organization. "
+                        + "Start the Tally Agent on the required PC."
         );
+    }
+
+    // ============================================================
+    // FIND EXACT CONNECTED AGENT
+    // ============================================================
+
+    private WebSocketSession findConnectedAgentSession(
+            String userId,
+            String agentId
+    ) {
+
+        if (agentId == null
+                || agentId.isBlank()) {
+
+            throw new ResponseStatusException(
+                    HttpStatus.BAD_REQUEST,
+                    "agentId is required"
+            );
+        }
+
+        /*
+         * Find authenticated user.
+         */
+        User user =
+                userRepository
+                        .findById(userId)
+                        .orElseThrow(() ->
+                                new ResponseStatusException(
+                                        HttpStatus.NOT_FOUND,
+                                        "User not found"
+                                )
+                        );
+
+        String organizationId =
+                user.getOrganizationId();
+
+        if (organizationId == null
+                || organizationId.isBlank()) {
+
+            throw new ResponseStatusException(
+                    HttpStatus.BAD_REQUEST,
+                    "User is not associated with an organization"
+            );
+        }
+
+        /*
+         * Find requested agent.
+         */
+        Agent agent =
+                agentConnectionService
+                        .getAgentsByOrganizationId(
+                                organizationId
+                        )
+                        .stream()
+                        .filter(a ->
+                                agentId.equals(
+                                        a.getAgentId()
+                                )
+                        )
+                        .findFirst()
+                        .orElseThrow(() ->
+                                new ResponseStatusException(
+                                        HttpStatus.NOT_FOUND,
+                                        "Tally Agent not found "
+                                                + "for your organization"
+                                )
+                        );
+
+        /*
+         * Security check:
+         * Agent MUST belong to user's organization.
+         */
+        if (!organizationId.equals(
+                agent.getOrganizationId()
+        )) {
+
+            throw new ResponseStatusException(
+                    HttpStatus.NOT_FOUND,
+                    "Tally Agent not found"
+            );
+        }
+
+        /*
+         * Check REAL WebSocket state.
+         */
+        if (!agentConnectionService
+                .isAgentConnected(
+                        agent.getAgentId()
+                )) {
+
+            throw new ResponseStatusException(
+                    HttpStatus.SERVICE_UNAVAILABLE,
+                    "Selected Tally Agent is offline. "
+                            + "Start the Tally Agent on the "
+                            + "selected PC."
+            );
+        }
+
+        WebSocketSession session =
+                agentConnectionService
+                        .getAgentSession(
+                                agent.getAgentId()
+                        );
+
+        if (session == null
+                || !session.isOpen()) {
+
+            throw new ResponseStatusException(
+                    HttpStatus.SERVICE_UNAVAILABLE,
+                    "Selected Tally Agent WebSocket is not connected"
+            );
+        }
+
+        log.info(
+                "EXACT TALLY ROUTING | userId={} | organizationId={} | agentId={} | agentName={}",
+                userId,
+                organizationId,
+                agent.getAgentId(),
+                agent.getAgentName()
+        );
+
+        return session;
+    }
+
+    // ============================================================
+    // AGENT SELECTION RECORD
+    // ============================================================
+
+    private record AgentSelection(
+            String organizationId,
+            Agent agent,
+            WebSocketSession session
+    ) {
     }
 }

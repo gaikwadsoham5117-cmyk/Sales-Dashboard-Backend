@@ -17,12 +17,20 @@ import org.springframework.web.socket.handler.TextWebSocketHandler;
 
 @Component
 @RequiredArgsConstructor
-public class AgentWebSocketHandler extends TextWebSocketHandler {
+public class AgentWebSocketHandler
+        extends TextWebSocketHandler {
 
     private final AgentConnectionService agentConnectionService;
+
     private final PendingRequestRegistry pendingRequestRegistry;
 
-    private final ObjectMapper mapper = new ObjectMapper();
+    private final ObjectMapper mapper =
+            new ObjectMapper();
+
+
+    // ============================================================
+    // CONNECTION ESTABLISHED
+    // ============================================================
 
     @Override
     public void afterConnectionEstablished(
@@ -30,7 +38,18 @@ public class AgentWebSocketHandler extends TextWebSocketHandler {
     ) throws Exception {
 
         String agentId =
-                (String) session.getAttributes().get("agentId");
+                (String) session
+                        .getAttributes()
+                        .get("agentId");
+
+        if (agentId == null || agentId.isBlank()) {
+
+            session.close(
+                    CloseStatus.POLICY_VIOLATION
+            );
+
+            return;
+        }
 
         agentConnectionService.connectAgent(
                 agentId,
@@ -38,62 +57,140 @@ public class AgentWebSocketHandler extends TextWebSocketHandler {
         );
     }
 
+
+    // ============================================================
+    // MESSAGE
+    // ============================================================
+
     @Override
     protected void handleTextMessage(
             WebSocketSession session,
             TextMessage message
     ) throws Exception {
 
-        String payload = message.getPayload();
+        String payload =
+                message.getPayload();
 
         JsonNode node;
 
         try {
-            node = mapper.readTree(payload);
+
+            node =
+                    mapper.readTree(payload);
+
         } catch (Exception e) {
+
             return;
         }
 
-        String type = node.path("type").asText("");
+        String agentId =
+                (String) session
+                        .getAttributes()
+                        .get("agentId");
+
+        /*
+         * Every valid message proves that the agent is alive.
+         */
+        if (agentId != null) {
+
+            agentConnectionService.touchAgent(
+                    agentId
+            );
+        }
+
+        String type =
+                node.path("type")
+                        .asText("");
+
 
         switch (type) {
 
+            // ----------------------------------------------------
+            // AUTH
+            // ----------------------------------------------------
+
             case "AUTH" -> {
-                // Real authentication already happened during the WS
-                // handshake (AgentHandshakeInterceptor). This is just
-                // an acknowledgement so the agent's logs show a clean
-                // "accepted" state instead of waiting on nothing.
-                ObjectNode ack = mapper.createObjectNode();
-                ack.put("type", "AUTH_OK");
-                sendJson(session, ack);
+
+                ObjectNode ack =
+                        mapper.createObjectNode();
+
+                ack.put(
+                        "type",
+                        "AUTH_OK"
+                );
+
+                sendJson(
+                        session,
+                        ack
+                );
             }
+
+
+            // ----------------------------------------------------
+            // PING
+            // ----------------------------------------------------
 
             case "PING" -> {
-                ObjectNode pong = mapper.createObjectNode();
-                pong.put("type", "PONG");
-                sendJson(session, pong);
+
+                ObjectNode pong =
+                        mapper.createObjectNode();
+
+                pong.put(
+                        "type",
+                        "PONG"
+                );
+
+                sendJson(
+                        session,
+                        pong
+                );
             }
+
+
+            // ----------------------------------------------------
+            // PONG
+            // ----------------------------------------------------
 
             case "PONG" -> {
-                // Ack to our own PING, if/when the backend starts
-                // sending heartbeats to agents. Nothing to do.
+                // Connection is alive.
             }
 
+
+            // ----------------------------------------------------
+            // PROXY RESPONSE
+            // ----------------------------------------------------
+
             case "PROXY_RESPONSE" -> {
-                String requestId = node.path("requestId").asText("");
+
+                String requestId =
+                        node.path("requestId")
+                                .asText("");
 
                 if (requestId.isBlank()) {
                     return;
                 }
 
-                pendingRequestRegistry.complete(requestId, node);
+                pendingRequestRegistry.complete(
+                        requestId,
+                        node
+                );
             }
 
+
+            // ----------------------------------------------------
+            // UNKNOWN
+            // ----------------------------------------------------
+
             default -> {
-                // Unknown message type; nothing to do.
+                // Ignore unknown message.
             }
         }
     }
+
+
+    // ============================================================
+    // CONNECTION CLOSED
+    // ============================================================
 
     @Override
     public void afterConnectionClosed(
@@ -102,13 +199,27 @@ public class AgentWebSocketHandler extends TextWebSocketHandler {
     ) throws Exception {
 
         String agentId =
-                (String) session.getAttributes().get("agentId");
+                (String) session
+                        .getAttributes()
+                        .get("agentId");
 
         if (agentId != null) {
 
-            agentConnectionService.disconnectAgent(agentId);
+            /*
+             * VERY IMPORTANT:
+             * pass the actual closing session.
+             */
+            agentConnectionService.disconnectAgent(
+                    agentId,
+                    session
+            );
         }
     }
+
+
+    // ============================================================
+    // TRANSPORT ERROR
+    // ============================================================
 
     @Override
     public void handleTransportError(
@@ -116,15 +227,32 @@ public class AgentWebSocketHandler extends TextWebSocketHandler {
             Throwable exception
     ) throws Exception {
 
-        session.close();
+        if (session.isOpen()) {
+            session.close();
+        }
     }
 
-    private void sendJson(WebSocketSession session, ObjectNode node) {
+
+    // ============================================================
+    // SEND JSON
+    // ============================================================
+
+    private void sendJson(
+            WebSocketSession session,
+            ObjectNode node
+    ) {
+
         try {
-            session.sendMessage(new TextMessage(mapper.writeValueAsString(node)));
+
+            session.sendMessage(
+                    new TextMessage(
+                            mapper.writeValueAsString(node)
+                    )
+            );
+
         } catch (Exception e) {
-            // Send failed; connection will be cleaned up via
-            // afterConnectionClosed / handleTransportError.
+
+            // Connection cleanup will happen automatically.
         }
     }
 }

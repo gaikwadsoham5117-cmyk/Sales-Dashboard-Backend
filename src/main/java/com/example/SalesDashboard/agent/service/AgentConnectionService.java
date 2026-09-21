@@ -19,12 +19,19 @@ public class AgentConnectionService {
 
     private final AgentRepository agentRepository;
 
+    /*
+     * Runtime WebSocket connections.
+     *
+     * IMPORTANT:
+     * MongoDB status is only persistent information.
+     * This map represents the REAL active WebSocket connection.
+     */
     private final Map<String, WebSocketSession> connectedAgents =
             new ConcurrentHashMap<>();
 
 
     // ============================================================
-    // AGENT CONNECT
+    // CONNECT
     // ============================================================
 
     public void connectAgent(
@@ -32,6 +39,13 @@ public class AgentConnectionService {
             WebSocketSession session
     ) {
 
+        if (agentId == null || agentId.isBlank()) {
+            return;
+        }
+
+        /*
+         * Replace the existing session for this agent.
+         */
         connectedAgents.put(
                 agentId,
                 session
@@ -56,16 +70,58 @@ public class AgentConnectionService {
 
 
     // ============================================================
-    // AGENT DISCONNECT
+    // DISCONNECT
     // ============================================================
 
+    /**
+     * IMPORTANT:
+     *
+     * We remove the session ONLY if the session that is closing
+     * is still the active session.
+     *
+     * This prevents:
+     *
+     * Old Session A closes
+     *       ↓
+     * accidentally removes newer Session B
+     */
     public void disconnectAgent(
-            String agentId
+            String agentId,
+            WebSocketSession closingSession
     ) {
 
-        connectedAgents.remove(
-                agentId
+        if (agentId == null || agentId.isBlank()) {
+            return;
+        }
+
+        connectedAgents.computeIfPresent(
+                agentId,
+                (id, currentSession) -> {
+
+                    /*
+                     * Only remove if this exact session is closing.
+                     */
+                    if (currentSession != null
+                            && closingSession != null
+                            && currentSession.getId()
+                                    .equals(closingSession.getId())) {
+
+                        return null;
+                    }
+
+                    /*
+                     * A newer connection already exists.
+                     * Keep it.
+                     */
+                    return currentSession;
+                }
         );
+
+        /*
+         * Check whether another active session still exists.
+         */
+        WebSocketSession activeSession =
+                connectedAgents.get(agentId);
 
         Agent agent =
                 agentRepository
@@ -74,11 +130,22 @@ public class AgentConnectionService {
 
         if (agent != null) {
 
-            agent.setStatus("OFFLINE");
+            if (activeSession != null
+                    && activeSession.isOpen()) {
 
-            agent.setLastSeen(
-                    LocalDateTime.now()
-            );
+                /*
+                 * Another/newer connection is active.
+                 */
+                agent.setStatus("ONLINE");
+
+            } else {
+
+                agent.setStatus("OFFLINE");
+
+                agent.setLastSeen(
+                        LocalDateTime.now()
+                );
+            }
 
             agentRepository.save(agent);
         }
@@ -93,9 +160,7 @@ public class AgentConnectionService {
             String agentId
     ) {
 
-        return connectedAgents.get(
-                agentId
-        );
+        return connectedAgents.get(agentId);
     }
 
 
@@ -108,17 +173,65 @@ public class AgentConnectionService {
     ) {
 
         WebSocketSession session =
-                connectedAgents.get(
-                        agentId
-                );
+                connectedAgents.get(agentId);
 
-        return session != null
-                && session.isOpen();
+        if (session == null) {
+            return false;
+        }
+
+        if (!session.isOpen()) {
+
+            connectedAgents.remove(
+                    agentId,
+                    session
+            );
+
+            return false;
+        }
+
+        return true;
     }
 
 
     // ============================================================
-    // EXISTING USER-BASED LOOKUP
+    // UPDATE LAST SEEN
+    // ============================================================
+
+    public void touchAgent(
+            String agentId
+    ) {
+
+        if (agentId == null || agentId.isBlank()) {
+            return;
+        }
+
+        WebSocketSession session =
+                connectedAgents.get(agentId);
+
+        if (session == null || !session.isOpen()) {
+            return;
+        }
+
+        Agent agent =
+                agentRepository
+                        .findByAgentId(agentId)
+                        .orElse(null);
+
+        if (agent != null) {
+
+            agent.setStatus("ONLINE");
+
+            agent.setLastSeen(
+                    LocalDateTime.now()
+            );
+
+            agentRepository.save(agent);
+        }
+    }
+
+
+    // ============================================================
+    // USER-BASED LOOKUP
     // ============================================================
 
     public List<Agent> getAgentsByUserId(
@@ -132,7 +245,7 @@ public class AgentConnectionService {
 
 
     // ============================================================
-    // NEW ORGANIZATION-BASED LOOKUP
+    // ORGANIZATION-BASED LOOKUP
     // ============================================================
 
     public List<Agent> getAgentsByOrganizationId(

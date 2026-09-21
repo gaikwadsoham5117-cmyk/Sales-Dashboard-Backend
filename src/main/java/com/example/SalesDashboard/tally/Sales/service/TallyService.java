@@ -60,11 +60,7 @@ public class TallyService {
     }
 
     // =========================================================
-    // EXISTING COMPANY-WISE SALES VOUCHERS
-    // =========================================================
-    //
-    // EXISTING METHOD - KEEPING BEHAVIOUR UNCHANGED
-    //
+    // COMPANY-WISE SALES VOUCHERS
     // =========================================================
 
     public List<SalesVoucherDTO> pullAllSalesVouchers(
@@ -159,7 +155,6 @@ public class TallyService {
     // =========================================================
     // Uses the existing TSPLAllSalesVouchers collection.
     // Only SVFromDate and SVToDate are supplied for the requested range.
-    // No new collection and no new date-filter formula are created.
     // =========================================================
 
     public List<SalesVoucherDTO> pullSalesVouchersByDateRange(
@@ -173,6 +168,7 @@ public class TallyService {
         validateCompanyName(companyName);
 
         if (from == null || to == null) {
+
             throw new ResponseStatusException(
                     HttpStatus.BAD_REQUEST,
                     "From and To dates are required"
@@ -180,6 +176,7 @@ public class TallyService {
         }
 
         if (from.isAfter(to)) {
+
             throw new ResponseStatusException(
                     HttpStatus.BAD_REQUEST,
                     "From date cannot be after To date"
@@ -202,6 +199,7 @@ public class TallyService {
         String body = response.getBody();
 
         if (body == null || body.isBlank()) {
+
             throw new ResponseStatusException(
                     HttpStatus.BAD_GATEWAY,
                     "Tally returned an empty response"
@@ -211,8 +209,11 @@ public class TallyService {
         JsonNode root;
 
         try {
+
             root = objectMapper.readTree(body);
+
         } catch (Exception e) {
+
             throw new ResponseStatusException(
                     HttpStatus.BAD_GATEWAY,
                     "Tally returned an invalid response"
@@ -224,6 +225,7 @@ public class TallyService {
                         .asText("");
 
         if (!"1".equals(status)) {
+
             throw new ResponseStatusException(
                     HttpStatus.BAD_GATEWAY,
                     "Tally reported an error for company '"
@@ -244,15 +246,20 @@ public class TallyService {
         }
 
         for (JsonNode voucherNode : collection) {
+
             try {
+
                 SalesVoucherDTO voucher =
                         mapVoucher(voucherNode);
 
                 if (voucher != null) {
                     vouchers.add(voucher);
                 }
+
             } catch (Exception ignored) {
-                // One malformed voucher should not fail the complete request.
+
+                // One malformed voucher should not
+                // fail the complete request.
             }
         }
 
@@ -261,10 +268,6 @@ public class TallyService {
 
     // =========================================================
     // BUILD DATE-RANGE TALLY REQUEST
-    // =========================================================
-    // IMPORTANT:
-    // Reuses the existing TSPLAllSalesVouchers collection.
-    // Only SVFromDate and SVToDate are changed.
     // =========================================================
 
     private TallyRequest buildSalesVouchersDateRangeRequest(
@@ -287,18 +290,22 @@ public class TallyService {
 
         List<TallyRequest.StaticVariable> staticVariables =
                 List.of(
+
                         new TallyRequest.StaticVariable(
                                 "svExportFormat",
                                 "jsonex"
                         ),
+
                         new TallyRequest.StaticVariable(
                                 "svCurrentCompany",
                                 companyName
                         ),
+
                         new TallyRequest.StaticVariable(
                                 "svFromDate",
                                 fromDate
                         ),
+
                         new TallyRequest.StaticVariable(
                                 "svToDate",
                                 toDate
@@ -309,28 +316,34 @@ public class TallyService {
                 Map.of(
                         "name",
                         "TSPLAllSalesVouchers",
+
                         "type",
                         "Collection"
                 );
 
         List<Map<String, String>> attributes =
                 List.of(
+
                         Map.of(
                                 "Type",
                                 "Vouchers : VoucherType"
                         ),
+
                         Map.of(
                                 "Child of",
                                 "$$VchTypeSales"
                         ),
+
                         Map.of(
                                 "Belongs To",
                                 "Yes"
                         ),
+
                         Map.of(
                                 "Fetch",
                                 "Date, VoucherTypeName, VoucherNumber, PartyLedgerName, GUID, MasterID"
                         ),
+
                         Map.of(
                                 "Fetch",
                                 "AllInventoryEntries.List, LedgerEntries.List"
@@ -1551,11 +1564,7 @@ public class TallyService {
     }
 
     // =========================================================
-    // EXISTING BUILD TALLY REQUEST
-    // =========================================================
-    //
-    // EXISTING REQUEST - KEEPING IT SEPARATE
-    //
+    // BUILD TALLY REQUEST
     // =========================================================
 
     private TallyRequest buildAllSalesVouchersRequest(
@@ -1643,13 +1652,12 @@ public class TallyService {
     }
 
     // =========================================================
-    // EXISTING CALL TALLY
+    // CALL TALLY
     // =========================================================
-    //
-    // EXISTING API REQUEST ID
-    //
-    // TSPLAllSalesVouchers
-    //
+    // IMPORTANT:
+    // No agentId is accepted here.
+    // AgentRelayService automatically selects the
+    // connected agent for the authenticated user's organization.
     // =========================================================
 
     private ResponseEntity<String> callTally(
@@ -1712,6 +1720,10 @@ public class TallyService {
         AgentRelayService.RelayResponse response;
 
         try {
+
+            // IMPORTANT:
+            // This is the automatic routing overload.
+            // agentId is NOT sent from frontend/API.
 
             response =
                     agentRelayService.relay(

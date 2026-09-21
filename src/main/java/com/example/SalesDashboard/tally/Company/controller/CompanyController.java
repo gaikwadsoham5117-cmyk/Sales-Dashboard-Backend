@@ -4,9 +4,7 @@ import com.example.SalesDashboard.framework.security.JwtAuthenticationFilter;
 import com.example.SalesDashboard.tally.Company.dto.CompanyDto;
 import com.example.SalesDashboard.tally.Company.service.CompanyService;
 import com.example.SalesDashboard.user.exception.UserNotAuthenticatedException;
-
 import lombok.RequiredArgsConstructor;
-
 import org.springframework.http.ResponseEntity;
 import org.springframework.security.core.Authentication;
 import org.springframework.web.bind.annotation.GetMapping;
@@ -24,12 +22,21 @@ public class CompanyController {
 
     private final CompanyService companyService;
 
+    // ============================================================
+    // GET COMPANIES
+    // ============================================================
+
     @GetMapping("/all")
     public ResponseEntity<Map<String, Object>> getAllCompanies(
             Authentication authentication
     ) {
 
-        String userId = extractUserId(authentication);
+        /*
+         * User ID comes from JWT.
+         * No agentId is required from frontend.
+         */
+        String userId =
+                extractUserId(authentication);
 
         List<CompanyDto> companies =
                 companyService.pullAllCompanies(userId);
@@ -37,11 +44,16 @@ public class CompanyController {
         return ResponseEntity.ok(
                 response(
                         true,
-                        companies.size() + " compan(y/ies) loaded in Tally",
+                        companies.size()
+                                + " compan(y/ies) loaded in Tally",
                         companies
                 )
         );
     }
+
+    // ============================================================
+    // RESPONSE
+    // ============================================================
 
     private Map<String, Object> response(
             boolean success,
@@ -49,32 +61,71 @@ public class CompanyController {
             Object data
     ) {
 
-        Map<String, Object> body = new LinkedHashMap<>();
+        Map<String, Object> body =
+                new LinkedHashMap<>();
 
-        body.put("success", success);
-        body.put("message", message);
-        body.put("data", data);
+        body.put(
+                "success",
+                success
+        );
+
+        body.put(
+                "message",
+                message
+        );
+
+        body.put(
+                "data",
+                data
+        );
 
         return body;
     }
 
-    private String extractUserId(Authentication authentication) {
+    // ============================================================
+    // USER ID FROM JWT
+    // ============================================================
 
-        if (authentication == null || !authentication.isAuthenticated()) {
-            throw new UserNotAuthenticatedException("User is not authenticated");
+    private String extractUserId(
+            Authentication authentication
+    ) {
+
+        if (authentication == null
+                || !authentication.isAuthenticated()) {
+
+            throw new UserNotAuthenticatedException(
+                    "User is not authenticated"
+            );
         }
 
-        Object details = authentication.getDetails();
+        Object details =
+                authentication.getDetails();
 
-        if (details instanceof JwtAuthenticationFilter.JwtAuthenticationDetails jwtDetails) {
+        if (details instanceof
+                JwtAuthenticationFilter.JwtAuthenticationDetails
+                        jwtDetails) {
 
-            String userId = jwtDetails.getUserId();
+            String userId =
+                    jwtDetails.getUserId();
 
-            if (userId != null && !userId.isBlank()) {
+            if (userId != null
+                    && !userId.isBlank()) {
+
                 return userId;
             }
         }
 
-        return authentication.getName();
+        String authenticationName =
+                authentication.getName();
+
+        if (authenticationName == null
+                || authenticationName.isBlank()) {
+
+            throw new UserNotAuthenticatedException(
+                    "Unable to determine authenticated user"
+            );
+        }
+
+        return authenticationName;
     }
 }

@@ -4,10 +4,10 @@ import com.example.SalesDashboard.framework.security.JwtAuthenticationFilter;
 import com.example.SalesDashboard.tally.Sales.dto.SalesVoucherDTO;
 import com.example.SalesDashboard.tally.Sales.service.TallyService;
 import com.example.SalesDashboard.user.exception.UserNotAuthenticatedException;
-
+import io.swagger.v3.oas.annotations.Operation;
+import io.swagger.v3.oas.annotations.Parameter;
 import io.swagger.v3.oas.annotations.tags.Tag;
 import lombok.RequiredArgsConstructor;
-
 import org.springframework.format.annotation.DateTimeFormat;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
@@ -27,19 +27,32 @@ public class TallyController {
     private final TallyService tallyService;
 
     // =========================================================
-    // EXISTING COMPANY-WISE SALES VOUCHERS API
+    // COMPANY-WISE SALES VOUCHERS
     // =========================================================
-    //
-    // EXISTING API - DO NOT CHANGE
     //
     // GET:
     // /api/tally/{companyName}/sales-vouchers
     //
+    // No agentId required.
+    //
+    // Backend automatically identifies the authenticated user,
+    // organization and connected Tally Agent.
+    //
     // =========================================================
 
+    @Operation(
+            summary = "Get all sales vouchers for a company",
+            description = "Fetches sales vouchers from the connected Tally Agent automatically."
+    )
     @GetMapping("/{companyName}/sales-vouchers")
     public ResponseEntity<List<SalesVoucherDTO>> getSalesVouchersByCompany(
+
+            @Parameter(
+                    description = "Tally company name",
+                    required = true
+            )
             @PathVariable String companyName,
+
             Authentication authentication
     ) {
 
@@ -54,37 +67,50 @@ public class TallyController {
     }
 
     // =========================================================
-    // NEW DATE-RANGE SALES VOUCHERS API
+    // DATE-RANGE SALES VOUCHERS
     // =========================================================
     //
     // DEFAULT:
     //
-    // GET
+    // GET:
     // /api/tally/{companyName}/sales-vouchers/date-range
     //
-    // Default:
     // from = today - 1 month
     // to   = today
     //
     // CUSTOM:
     //
-    // GET
     // /api/tally/{companyName}/sales-vouchers/date-range
-    // ?from=2026-08-01&to=2026-08-31
+    //     ?from=2026-08-01
+    //     &to=2026-08-31
     //
-    // Date format:
-    // yyyy-MM-dd
+    // No agentId required.
     //
     // =========================================================
 
+    @Operation(
+            summary = "Get sales vouchers by date range",
+            description = "Fetches sales vouchers from the connected Tally Agent automatically for the specified date range."
+    )
     @GetMapping("/{companyName}/sales-vouchers/date-range")
     public ResponseEntity<List<SalesVoucherDTO>> getSalesVouchersByDateRange(
+
+            @Parameter(
+                    description = "Tally company name",
+                    required = true
+            )
             @PathVariable String companyName,
 
+            @Parameter(
+                    description = "Start date in yyyy-MM-dd format"
+            )
             @RequestParam(required = false)
             @DateTimeFormat(iso = DateTimeFormat.ISO.DATE)
             LocalDate from,
 
+            @Parameter(
+                    description = "End date in yyyy-MM-dd format"
+            )
             @RequestParam(required = false)
             @DateTimeFormat(iso = DateTimeFormat.ISO.DATE)
             LocalDate to,
@@ -94,43 +120,25 @@ public class TallyController {
 
         String userId = extractUserId(authentication);
 
-        // -----------------------------------------------------
-        // TODAY
-        // -----------------------------------------------------
-
         LocalDate today = LocalDate.now();
 
-        // -----------------------------------------------------
-        // DEFAULT TO DATE
-        // -----------------------------------------------------
-
+        // If 'to' is not supplied, use today's date.
         if (to == null) {
             to = today;
         }
 
-        // -----------------------------------------------------
-        // DEFAULT FROM DATE
-        // -----------------------------------------------------
-
+        // If 'from' is not supplied, use one month before 'to'.
         if (from == null) {
             from = to.minusMonths(1);
         }
 
-        // -----------------------------------------------------
-        // DATE VALIDATION
-        // -----------------------------------------------------
-
+        // Validate date range.
         if (from.isAfter(to)) {
-
             throw new ResponseStatusException(
                     HttpStatus.BAD_REQUEST,
                     "'from' date cannot be after 'to' date"
             );
         }
-
-        // -----------------------------------------------------
-        // CALL DATE-RANGE SERVICE
-        // -----------------------------------------------------
 
         return ResponseEntity.ok(
                 tallyService.pullSalesVouchersByDateRange(
@@ -158,9 +166,14 @@ public class TallyController {
             );
         }
 
+        // -----------------------------------------------------
+        // First try JWT authentication details
+        // -----------------------------------------------------
+
         Object details = authentication.getDetails();
 
-        if (details instanceof JwtAuthenticationFilter.JwtAuthenticationDetails jwtDetails) {
+        if (details instanceof
+                JwtAuthenticationFilter.JwtAuthenticationDetails jwtDetails) {
 
             String userId = jwtDetails.getUserId();
 
@@ -168,6 +181,10 @@ public class TallyController {
                 return userId;
             }
         }
+
+        // -----------------------------------------------------
+        // Fallback to authentication name
+        // -----------------------------------------------------
 
         String authenticationName =
                 authentication.getName();
