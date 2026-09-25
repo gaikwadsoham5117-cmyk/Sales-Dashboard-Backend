@@ -1,6 +1,8 @@
 package com.example.SalesDashboard.agent.service;
 
 import com.fasterxml.jackson.databind.JsonNode;
+import com.fasterxml.jackson.databind.node.ObjectNode;
+import com.fasterxml.jackson.databind.ObjectMapper;
 
 import org.springframework.stereotype.Component;
 
@@ -11,41 +13,68 @@ import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.TimeUnit;
 
 /**
- * Correlates an outgoing PROXY_REQUEST (sent to a specific agent over its
- * WebSocket session) with the PROXY_RESPONSE that eventually comes back on
- * that same session, asynchronously, on a different thread.
+ * Correlates outgoing PROXY_REQUEST messages with responses coming
+ * back from the Tally Agent.
  *
- * Flow:
- *  1. AgentRelayService calls register(requestId) before sending the
- *     PROXY_REQUEST, and gets back a CompletableFuture.
- *  2. AgentRelayService blocks on future.get(timeout) waiting for a reply.
- *  3. When the agent's PROXY_RESPONSE arrives, AgentWebSocketHandler calls
- *     complete(requestId, payload), which resolves the future and unblocks
- *     step 2, wherever that thread was left waiting.
+ * Supports both:
+ *
+ * 1. Legacy single-message response:
+ *      PROXY_RESPONSE
+ *
+ * 2. New streamed response:
+ *      PROXY_RESPONSE_START
+ *      PROXY_RESPONSE_CHUNK
+ *      PROXY_RESPONSE_END
+ *
+ * The streamed protocol prevents one very large Tally response from
+ * being sent as a single WebSocket frame.
  */
 @Component
 public class PendingRequestRegistry {
 
-    private static final Duration DEFAULT_TIMEOUT = Duration.ofSeconds(20);
+    private static final Duration DEFAULT_TIMEOUT =
+            Duration.ofSeconds(20);
 
-    private final Map<String, CompletableFuture<JsonNode>> pending =
+    private final Map<String, PendingResponse> pending =
             new ConcurrentHashMap<>();
 
+    private final ObjectMapper mapper =
+            new ObjectMapper();
+
+
+    // ============================================================
+    // REGISTER
+    // ============================================================
+
     /**
-     * Registers a new pending request and returns a future that will
-     * complete when the matching PROXY_RESPONSE arrives, or time out on
-     * its own after DEFAULT_TIMEOUT if nothing ever comes back (e.g. the
-     * agent died mid-request without closing the socket).
+     * Registers a request before PROXY_REQUEST is sent to the agent.
      */
-    public CompletableFuture<JsonNode> register(String requestId) {
+    public CompletableFuture<JsonNode> register(
+            String requestId
+    ) {
 
-        CompletableFuture<JsonNode> future = new CompletableFuture<>();
+        PendingResponse pendingResponse =
+                new PendingResponse();
 
-        pending.put(requestId, future);
+        pending.put(
+                requestId,
+                pendingResponse
+        );
 
-        // Always remove the entry once it settles, however it settles,
-        // so the map never accumulates stale requests.
-        future.whenComplete((result, error) -> pending.remove(requestId));
+        CompletableFuture<JsonNode> future =
+                pendingResponse.future;
+
+        /*
+         * Always remove the request when it completes,
+         * fails or times out.
+         */
+        future.whenComplete(
+                (result, error) ->
+                        pending.remove(
+                                requestId,
+                                pendingResponse
+                        )
+        );
 
         return future.orTimeout(
                 DEFAULT_TIMEOUT.toSeconds(),
@@ -53,29 +82,207 @@ public class PendingRequestRegistry {
         );
     }
 
+
+    // ============================================================
+    // LEGACY COMPLETE
+    // ============================================================
+
     /**
-     * Called from AgentWebSocketHandler when a PROXY_RESPONSE arrives.
-     * No-op if the requestId is unknown (e.g. it already timed out).
+     * Handles the old single PROXY_RESPONSE format.
+     *
+     * This is kept for backward compatibility and for agent errors.
      */
-    public void complete(String requestId, JsonNode response) {
+    public void complete(
+            String requestId,
+            JsonNode response
+    ) {
 
-        CompletableFuture<JsonNode> future = pending.get(requestId);
+        PendingResponse pendingResponse =
+                pending.get(requestId);
 
-        if (future != null) {
-            future.complete(response);
+        if (pendingResponse != null) {
+
+            pendingResponse.future.complete(
+                    response
+            );
         }
     }
 
+
+    // ============================================================
+    // STREAM START
+    // ============================================================
+
     /**
-     * Called if a request should fail immediately instead of waiting
-     * (e.g. the agent disconnected while we were waiting on it).
+     * Starts a streamed response.
+     *
+     * Example:
+     *
+     * {
+     *   "type": "PROXY_RESPONSE_START",
+     *   "requestId": "...",
+     *   "ok": true,
+     *   "status": 200
+     * }
      */
-    public void fail(String requestId, Throwable error) {
+    public void startStream(
+            String requestId,
+            int status
+    ) {
 
-        CompletableFuture<JsonNode> future = pending.get(requestId);
+        PendingResponse pendingResponse =
+                pending.get(requestId);
 
-        if (future != null) {
-            future.completeExceptionally(error);
+        if (pendingResponse == null) {
+            return;
         }
+
+        pendingResponse.status = status;
+        pendingResponse.streaming = true;
+    }
+
+
+    // ============================================================
+    // STREAM CHUNK
+    // ============================================================
+
+    /**
+     * Appends one response chunk.
+     *
+     * IMPORTANT:
+     * We append chunks directly into one StringBuilder.
+     *
+     * We do NOT create a new String containing the complete
+     * response for every chunk.
+     */
+    public void appendChunk(
+            String requestId,
+            String chunk
+    ) {
+
+        if (chunk == null || chunk.isEmpty()) {
+            return;
+        }
+
+        PendingResponse pendingResponse =
+                pending.get(requestId);
+
+        if (pendingResponse == null) {
+            return;
+        }
+
+        synchronized (pendingResponse) {
+
+            pendingResponse.body.append(
+                    chunk
+            );
+        }
+    }
+
+
+    // ============================================================
+    // STREAM END
+    // ============================================================
+
+    /**
+     * Completes a streamed response.
+     *
+     * At this point the backend converts the accumulated response
+     * into the same JsonNode structure that the old PROXY_RESPONSE
+     * used.
+     */
+    public void completeStream(
+            String requestId
+    ) {
+
+        PendingResponse pendingResponse =
+                pending.get(requestId);
+
+        if (pendingResponse == null) {
+            return;
+        }
+
+        String responseBody;
+
+        synchronized (pendingResponse) {
+
+            responseBody =
+                    pendingResponse.body.toString();
+        }
+
+        ObjectNode response =
+                mapper.createObjectNode();
+
+        response.put(
+                "type",
+                "PROXY_RESPONSE"
+        );
+
+        response.put(
+                "requestId",
+                requestId
+        );
+
+        response.put(
+                "ok",
+                true
+        );
+
+        response.put(
+                "status",
+                pendingResponse.status
+        );
+
+        response.put(
+                "body",
+                responseBody
+        );
+
+        pendingResponse.future.complete(
+                response
+        );
+    }
+
+
+    // ============================================================
+    // FAIL
+    // ============================================================
+
+    /**
+     * Fails a pending request immediately.
+     */
+    public void fail(
+            String requestId,
+            Throwable error
+    ) {
+
+        PendingResponse pendingResponse =
+                pending.get(requestId);
+
+        if (pendingResponse != null) {
+
+            pendingResponse.future
+                    .completeExceptionally(
+                            error
+                    );
+        }
+    }
+
+
+    // ============================================================
+    // INTERNAL STATE
+    // ============================================================
+
+    private static final class PendingResponse {
+
+        private final CompletableFuture<JsonNode> future =
+                new CompletableFuture<>();
+
+        private final StringBuilder body =
+                new StringBuilder();
+
+        private volatile int status = 200;
+
+        private volatile boolean streaming = false;
     }
 }

@@ -3,11 +3,14 @@ package com.example.SalesDashboard.agent.service;
 import com.example.SalesDashboard.agent.entity.Agent;
 import com.example.SalesDashboard.user.entity.User;
 import com.example.SalesDashboard.user.repository.UserRepository;
+
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.node.ObjectNode;
+
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+
 import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Service;
 import org.springframework.web.server.ResponseStatusException;
@@ -26,12 +29,20 @@ import java.util.concurrent.TimeoutException;
 @RequiredArgsConstructor
 public class AgentRelayService {
 
+
     private final AgentConnectionService agentConnectionService;
+
     private final PendingRequestRegistry pendingRequestRegistry;
+
     private final UserRepository userRepository;
 
     private final ObjectMapper mapper =
             new ObjectMapper();
+
+
+    // ============================================================
+    // RELAY RESPONSE
+    // ============================================================
 
     public record RelayResponse(
             int status,
@@ -39,15 +50,25 @@ public class AgentRelayService {
     ) {
     }
 
+
     // ============================================================
     // MAIN RELAY - AUTOMATIC AGENT SELECTION
     // ============================================================
+
     /*
-     * Used by APIs such as:
+     * This is the method that should be used by normal APIs.
+     *
+     * Example:
      *
      * GET /api/company/all
      *
-     * Frontend sends ONLY JWT.
+     * Frontend sends:
+     *
+     * Authorization: Bearer <JWT>
+     *
+     * NO agentId.
+     *
+     * Flow:
      *
      * JWT
      *   ↓
@@ -59,6 +80,7 @@ public class AgentRelayService {
      *   ↓
      * Tally PC
      */
+
     public RelayResponse relay(
             String userId,
             String method,
@@ -67,7 +89,9 @@ public class AgentRelayService {
     ) {
 
         AgentSelection selection =
-                findConnectedAgent(userId);
+                findConnectedAgent(
+                        userId
+                );
 
         return sendRequestToAgent(
                 userId,
@@ -80,15 +104,20 @@ public class AgentRelayService {
         );
     }
 
+
     // ============================================================
     // EXACT AGENT RELAY
     // ============================================================
+
     /*
-     * This method is kept for APIs that specifically need
-     * an agentId.
+     * Kept for backward compatibility.
      *
-     * It is NOT used by /api/company/all.
+     * IMPORTANT:
+     * Normal frontend APIs should NOT use this overload.
+     *
+     * Automatic routing uses the method above.
      */
+
     public RelayResponse relay(
             String userId,
             String agentId,
@@ -143,6 +172,7 @@ public class AgentRelayService {
         );
     }
 
+
     // ============================================================
     // SEND REQUEST TO AGENT
     // ============================================================
@@ -163,6 +193,11 @@ public class AgentRelayService {
         String requestId =
                 UUID.randomUUID().toString();
 
+
+        // ========================================================
+        // BUILD PROXY REQUEST
+        // ========================================================
+
         ObjectNode request =
                 mapper.createObjectNode();
 
@@ -179,6 +214,7 @@ public class AgentRelayService {
         request.put(
                 "method",
                 method == null
+                        || method.isBlank()
                         ? "POST"
                         : method
         );
@@ -190,28 +226,50 @@ public class AgentRelayService {
                         : body
         );
 
+
         ObjectNode headersNode =
                 request.putObject(
                         "headers"
                 );
 
         if (headers != null) {
+
             headers.forEach(
-                    headersNode::put
+                    (key, value) -> {
+
+                        if (key != null
+                                && !key.isBlank()) {
+
+                            headersNode.put(
+                                    key,
+                                    value == null
+                                            ? ""
+                                            : value
+                            );
+                        }
+                    }
             );
         }
 
-        /*
-         * Register BEFORE sending the request.
-         */
+
+        // ========================================================
+        // REGISTER BEFORE SEND
+        // ========================================================
+
         CompletableFuture<JsonNode> future =
                 pendingRequestRegistry.register(
                         requestId
                 );
 
+
+        // ========================================================
+        // SEND TO AGENT
+        // ========================================================
+
         try {
 
-            if (!session.isOpen()) {
+            if (session == null
+                    || !session.isOpen()) {
 
                 pendingRequestRegistry.fail(
                         requestId,
@@ -226,6 +284,7 @@ public class AgentRelayService {
                 );
             }
 
+
             log.info(
                     "TALLY ROUTING | userId={} | organizationId={} | agentId={} | agentName={}",
                     userId,
@@ -234,17 +293,24 @@ public class AgentRelayService {
                     agent.getAgentName()
             );
 
+
+            String requestJson =
+                    mapper.writeValueAsString(
+                            request
+                    );
+
+
             session.sendMessage(
                     new TextMessage(
-                            mapper.writeValueAsString(
-                                    request
-                            )
+                            requestJson
                     )
             );
+
 
         } catch (ResponseStatusException e) {
 
             throw e;
+
 
         } catch (Exception e) {
 
@@ -260,6 +326,11 @@ public class AgentRelayService {
             );
         }
 
+
+        // ========================================================
+        // WAIT FOR RESPONSE
+        // ========================================================
+
         JsonNode response;
 
         try {
@@ -267,10 +338,12 @@ public class AgentRelayService {
             response =
                     future.get();
 
+
         } catch (ExecutionException e) {
 
             Throwable cause =
                     e.getCause();
+
 
             if (cause instanceof TimeoutException) {
 
@@ -283,15 +356,28 @@ public class AgentRelayService {
                 );
             }
 
+
+            String message =
+                    cause == null
+                            ? "Unknown error"
+                            : cause.getMessage();
+
+
             throw new ResponseStatusException(
                     HttpStatus.BAD_GATEWAY,
                     "Error waiting for Tally Agent response: "
-                            + cause.getMessage()
+                            + message
             );
+
 
         } catch (InterruptedException e) {
 
             Thread.currentThread().interrupt();
+
+            pendingRequestRegistry.fail(
+                    requestId,
+                    e
+            );
 
             throw new ResponseStatusException(
                     HttpStatus.BAD_GATEWAY,
@@ -300,13 +386,15 @@ public class AgentRelayService {
             );
         }
 
+
         // ========================================================
-        // AGENT RESPONSE
+        // PROCESS AGENT RESPONSE
         // ========================================================
 
         boolean ok =
                 response.path("ok")
                         .asBoolean(false);
+
 
         if (!ok) {
 
@@ -316,6 +404,7 @@ public class AgentRelayService {
                                     "Unknown agent error"
                             );
 
+
             log.warn(
                     "Agent relay failed | userId={} | organizationId={} | agentId={} | error={}",
                     userId,
@@ -324,6 +413,7 @@ public class AgentRelayService {
                     error
             );
 
+
             throw new ResponseStatusException(
                     HttpStatus.BAD_GATEWAY,
                     "Tally Agent error: "
@@ -331,19 +421,23 @@ public class AgentRelayService {
             );
         }
 
+
         int status =
                 response.path("status")
                         .asInt(200);
 
+
         String responseBody =
                 response.path("body")
                         .asText("");
+
 
         return new RelayResponse(
                 status,
                 responseBody
         );
     }
+
 
     // ============================================================
     // AUTOMATIC AGENT SELECTION
@@ -353,9 +447,10 @@ public class AgentRelayService {
             String userId
     ) {
 
-        /*
-         * 1. Find authenticated user.
-         */
+        // ========================================================
+        // 1. FIND USER
+        // ========================================================
+
         User user =
                 userRepository
                         .findById(userId)
@@ -366,11 +461,14 @@ public class AgentRelayService {
                                 )
                         );
 
-        /*
-         * 2. Get organization from user.
-         */
+
+        // ========================================================
+        // 2. GET ORGANIZATION
+        // ========================================================
+
         String organizationId =
                 user.getOrganizationId();
+
 
         if (organizationId == null
                 || organizationId.isBlank()) {
@@ -381,14 +479,17 @@ public class AgentRelayService {
             );
         }
 
-        /*
-         * 3. Get all agents belonging to this organization.
-         */
+
+        // ========================================================
+        // 3. GET ORGANIZATION AGENTS
+        // ========================================================
+
         List<Agent> agents =
                 agentConnectionService
                         .getAgentsByOrganizationId(
                                 organizationId
                         );
+
 
         if (agents == null
                 || agents.isEmpty()) {
@@ -399,22 +500,42 @@ public class AgentRelayService {
             );
         }
 
+
+        // ========================================================
+        // 4. FIND REAL CONNECTED AGENT
+        // ========================================================
+
         /*
-         * 4. Find a REAL connected agent.
+         * MongoDB status is NOT used as the source of truth.
          *
-         * We do NOT trust the MongoDB status field here.
-         * The WebSocket connection is the source of truth.
+         * The actual WebSocket connection determines whether
+         * the agent is connected.
          */
+
         for (Agent agent : agents) {
+
+            if (agent == null) {
+                continue;
+            }
+
 
             String agentId =
                     agent.getAgentId();
+
 
             if (agentId == null
                     || agentId.isBlank()) {
 
                 continue;
             }
+
+
+            /*
+             * Security:
+             *
+             * Agent must belong to the same organization
+             * as the authenticated user.
+             */
 
             if (!organizationId.equals(
                     agent.getOrganizationId()
@@ -423,38 +544,55 @@ public class AgentRelayService {
                 continue;
             }
 
-            if (agentConnectionService
-                    .isAgentConnected(agentId)) {
 
-                WebSocketSession session =
-                        agentConnectionService
-                                .getAgentSession(
-                                        agentId
-                                );
+            /*
+             * Check actual WebSocket connection.
+             */
 
-                if (session != null
-                        && session.isOpen()) {
+            if (!agentConnectionService
+                    .isAgentConnected(
+                            agentId
+                    )) {
 
-                    log.info(
-                            "AUTO TALLY ROUTING | userId={} | organizationId={} | agentId={} | agentName={}",
-                            userId,
-                            organizationId,
-                            agentId,
-                            agent.getAgentName()
-                    );
-
-                    return new AgentSelection(
-                            organizationId,
-                            agent,
-                            session
-                    );
-                }
+                continue;
             }
+
+
+            WebSocketSession session =
+                    agentConnectionService
+                            .getAgentSession(
+                                    agentId
+                            );
+
+
+            if (session == null
+                    || !session.isOpen()) {
+
+                continue;
+            }
+
+
+            log.info(
+                    "AUTO TALLY ROUTING | userId={} | organizationId={} | agentId={} | agentName={}",
+                    userId,
+                    organizationId,
+                    agentId,
+                    agent.getAgentName()
+            );
+
+
+            return new AgentSelection(
+                    organizationId,
+                    agent,
+                    session
+            );
         }
 
-        /*
-         * No connected agent was found.
-         */
+
+        // ========================================================
+        // NO CONNECTED AGENT
+        // ========================================================
+
         throw new ResponseStatusException(
                 HttpStatus.SERVICE_UNAVAILABLE,
                 "No connected Tally Agent found for your organization. "
@@ -462,9 +600,17 @@ public class AgentRelayService {
         );
     }
 
+
     // ============================================================
     // FIND EXACT CONNECTED AGENT
     // ============================================================
+
+    /*
+     * Backward-compatible method.
+     *
+     * Normal frontend requests should use automatic routing
+     * instead of this method.
+     */
 
     private WebSocketSession findConnectedAgentSession(
             String userId,
@@ -480,9 +626,11 @@ public class AgentRelayService {
             );
         }
 
-        /*
-         * Find authenticated user.
-         */
+
+        // ========================================================
+        // FIND USER
+        // ========================================================
+
         User user =
                 userRepository
                         .findById(userId)
@@ -493,8 +641,10 @@ public class AgentRelayService {
                                 )
                         );
 
+
         String organizationId =
                 user.getOrganizationId();
+
 
         if (organizationId == null
                 || organizationId.isBlank()) {
@@ -505,9 +655,11 @@ public class AgentRelayService {
             );
         }
 
-        /*
-         * Find requested agent.
-         */
+
+        // ========================================================
+        // FIND AGENT
+        // ========================================================
+
         Agent agent =
                 agentConnectionService
                         .getAgentsByOrganizationId(
@@ -515,7 +667,8 @@ public class AgentRelayService {
                         )
                         .stream()
                         .filter(a ->
-                                agentId.equals(
+                                a != null
+                                        && agentId.equals(
                                         a.getAgentId()
                                 )
                         )
@@ -528,10 +681,11 @@ public class AgentRelayService {
                                 )
                         );
 
-        /*
-         * Security check:
-         * Agent MUST belong to user's organization.
-         */
+
+        // ========================================================
+        // SECURITY CHECK
+        // ========================================================
+
         if (!organizationId.equals(
                 agent.getOrganizationId()
         )) {
@@ -542,9 +696,11 @@ public class AgentRelayService {
             );
         }
 
-        /*
-         * Check REAL WebSocket state.
-         */
+
+        // ========================================================
+        // CHECK REAL WEBSOCKET STATE
+        // ========================================================
+
         if (!agentConnectionService
                 .isAgentConnected(
                         agent.getAgentId()
@@ -558,11 +714,13 @@ public class AgentRelayService {
             );
         }
 
+
         WebSocketSession session =
                 agentConnectionService
                         .getAgentSession(
                                 agent.getAgentId()
                         );
+
 
         if (session == null
                 || !session.isOpen()) {
@@ -573,6 +731,7 @@ public class AgentRelayService {
             );
         }
 
+
         log.info(
                 "EXACT TALLY ROUTING | userId={} | organizationId={} | agentId={} | agentName={}",
                 userId,
@@ -581,8 +740,10 @@ public class AgentRelayService {
                 agent.getAgentName()
         );
 
+
         return session;
     }
+
 
     // ============================================================
     // AGENT SELECTION RECORD

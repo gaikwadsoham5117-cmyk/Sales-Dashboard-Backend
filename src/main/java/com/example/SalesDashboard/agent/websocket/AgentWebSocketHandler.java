@@ -20,6 +20,7 @@ import org.springframework.web.socket.handler.TextWebSocketHandler;
 public class AgentWebSocketHandler
         extends TextWebSocketHandler {
 
+
     private final AgentConnectionService agentConnectionService;
 
     private final PendingRequestRegistry pendingRequestRegistry;
@@ -42,7 +43,8 @@ public class AgentWebSocketHandler
                         .getAttributes()
                         .get("agentId");
 
-        if (agentId == null || agentId.isBlank()) {
+        if (agentId == null
+                || agentId.isBlank()) {
 
             session.close(
                     CloseStatus.POLICY_VIOLATION
@@ -71,15 +73,27 @@ public class AgentWebSocketHandler
         String payload =
                 message.getPayload();
 
+        if (payload == null
+                || payload.isBlank()) {
+
+            return;
+        }
+
         JsonNode node;
 
         try {
 
             node =
-                    mapper.readTree(payload);
+                    mapper.readTree(
+                            payload
+                    );
 
         } catch (Exception e) {
 
+            /*
+             * Do not allow malformed JSON to break
+             * the WebSocket connection.
+             */
             return;
         }
 
@@ -89,9 +103,11 @@ public class AgentWebSocketHandler
                         .get("agentId");
 
         /*
-         * Every valid message proves that the agent is alive.
+         * Every valid message proves that the
+         * agent connection is alive.
          */
-        if (agentId != null) {
+        if (agentId != null
+                && !agentId.isBlank()) {
 
             agentConnectionService.touchAgent(
                     agentId
@@ -105,9 +121,10 @@ public class AgentWebSocketHandler
 
         switch (type) {
 
-            // ----------------------------------------------------
+
+            // ====================================================
             // AUTH
-            // ----------------------------------------------------
+            // ====================================================
 
             case "AUTH" -> {
 
@@ -126,9 +143,9 @@ public class AgentWebSocketHandler
             }
 
 
-            // ----------------------------------------------------
+            // ====================================================
             // PING
-            // ----------------------------------------------------
+            // ====================================================
 
             case "PING" -> {
 
@@ -147,44 +164,198 @@ public class AgentWebSocketHandler
             }
 
 
-            // ----------------------------------------------------
+            // ====================================================
             // PONG
-            // ----------------------------------------------------
+            // ====================================================
 
             case "PONG" -> {
-                // Connection is alive.
+
+                /*
+                 * Connection is alive.
+                 */
             }
 
 
-            // ----------------------------------------------------
-            // PROXY RESPONSE
-            // ----------------------------------------------------
+            // ====================================================
+            // LEGACY PROXY RESPONSE
+            // ====================================================
 
             case "PROXY_RESPONSE" -> {
 
-                String requestId =
-                        node.path("requestId")
-                                .asText("");
-
-                if (requestId.isBlank()) {
-                    return;
-                }
-
-                pendingRequestRegistry.complete(
-                        requestId,
+                handleProxyResponse(
                         node
                 );
             }
 
 
-            // ----------------------------------------------------
-            // UNKNOWN
-            // ----------------------------------------------------
+            // ====================================================
+            // STREAM START
+            // ====================================================
+
+            case "PROXY_RESPONSE_START" -> {
+
+                handleProxyResponseStart(
+                        node
+                );
+            }
+
+
+            // ====================================================
+            // STREAM CHUNK
+            // ====================================================
+
+            case "PROXY_RESPONSE_CHUNK" -> {
+
+                handleProxyResponseChunk(
+                        node
+                );
+            }
+
+
+            // ====================================================
+            // STREAM END
+            // ====================================================
+
+            case "PROXY_RESPONSE_END" -> {
+
+                handleProxyResponseEnd(
+                        node
+                );
+            }
+
+
+            // ====================================================
+            // UNKNOWN MESSAGE
+            // ====================================================
 
             default -> {
-                // Ignore unknown message.
+
+                /*
+                 * Ignore unknown message types.
+                 */
             }
         }
+    }
+
+
+    // ============================================================
+    // LEGACY PROXY RESPONSE
+    // ============================================================
+
+    private void handleProxyResponse(
+            JsonNode node
+    ) {
+
+        String requestId =
+                node.path("requestId")
+                        .asText("");
+
+        if (requestId.isBlank()) {
+            return;
+        }
+
+        pendingRequestRegistry.complete(
+                requestId,
+                node
+        );
+    }
+
+
+    // ============================================================
+    // STREAM START
+    // ============================================================
+
+    private void handleProxyResponseStart(
+            JsonNode node
+    ) {
+
+        String requestId =
+                node.path("requestId")
+                        .asText("");
+
+        if (requestId.isBlank()) {
+            return;
+        }
+
+        boolean ok =
+                node.path("ok")
+                        .asBoolean(false);
+
+        /*
+         * If the Agent says the request failed,
+         * don't start a successful stream.
+         */
+        if (!ok) {
+
+            pendingRequestRegistry.complete(
+                    requestId,
+                    node
+            );
+
+            return;
+        }
+
+        int status =
+                node.path("status")
+                        .asInt(200);
+
+        pendingRequestRegistry.startStream(
+                requestId,
+                status
+        );
+    }
+
+
+    // ============================================================
+    // STREAM CHUNK
+    // ============================================================
+
+    private void handleProxyResponseChunk(
+            JsonNode node
+    ) {
+
+        String requestId =
+                node.path("requestId")
+                        .asText("");
+
+        if (requestId.isBlank()) {
+            return;
+        }
+
+        String chunk =
+                node.path("body")
+                        .asText("");
+
+        if (chunk.isEmpty()) {
+            return;
+        }
+
+        pendingRequestRegistry.appendChunk(
+                requestId,
+                chunk
+        );
+    }
+
+
+    // ============================================================
+    // STREAM END
+    // ============================================================
+
+    private void handleProxyResponseEnd(
+            JsonNode node
+    ) {
+
+        String requestId =
+                node.path("requestId")
+                        .asText("");
+
+        if (requestId.isBlank()) {
+            return;
+        }
+
+        pendingRequestRegistry.completeStream(
+                requestId
+        );
     }
 
 
@@ -203,11 +374,11 @@ public class AgentWebSocketHandler
                         .getAttributes()
                         .get("agentId");
 
-        if (agentId != null) {
+        if (agentId != null
+                && !agentId.isBlank()) {
 
             /*
-             * VERY IMPORTANT:
-             * pass the actual closing session.
+             * Pass the actual closing session.
              */
             agentConnectionService.disconnectAgent(
                     agentId,
@@ -228,7 +399,16 @@ public class AgentWebSocketHandler
     ) throws Exception {
 
         if (session.isOpen()) {
-            session.close();
+
+            try {
+
+                session.close(
+                        CloseStatus.SERVER_ERROR
+                );
+
+            } catch (Exception ignored) {
+                // Cleanup handled by WebSocket lifecycle.
+            }
         }
     }
 
@@ -246,13 +426,18 @@ public class AgentWebSocketHandler
 
             session.sendMessage(
                     new TextMessage(
-                            mapper.writeValueAsString(node)
+                            mapper.writeValueAsString(
+                                    node
+                            )
                     )
             );
 
         } catch (Exception e) {
 
-            // Connection cleanup will happen automatically.
+            /*
+             * Connection cleanup will happen
+             * through the WebSocket lifecycle.
+             */
         }
     }
 }

@@ -25,7 +25,6 @@ import java.util.List;
 public class TallyController {
 
     private final TallyService tallyService;
-
     // =========================================================
     // COMPANY-WISE SALES VOUCHERS
     // =========================================================
@@ -41,6 +40,7 @@ public class TallyController {
     // =========================================================
 
     @Operation(
+
             summary = "Get all sales vouchers for a company",
             description = "Fetches sales vouchers from the connected Tally Agent automatically."
     )
