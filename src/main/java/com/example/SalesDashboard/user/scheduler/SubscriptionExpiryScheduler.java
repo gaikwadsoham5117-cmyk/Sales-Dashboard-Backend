@@ -1,8 +1,8 @@
 package com.example.SalesDashboard.user.scheduler;
 
-import com.example.SalesDashboard.user.entity.User;
-import com.example.SalesDashboard.user.entity.UserStatus;
-import com.example.SalesDashboard.user.repository.UserRepository;
+import com.example.SalesDashboard.organization.entity.BusinessOrganization;
+import com.example.SalesDashboard.organization.entity.SubscriptionStatus;
+import com.example.SalesDashboard.organization.repository.BusinessOrganizationRepository;
 
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -18,16 +18,15 @@ import java.util.List;
 @Slf4j
 public class SubscriptionExpiryScheduler {
 
-    private final UserRepository userRepository;
+    private final BusinessOrganizationRepository organizationRepository;
 
     /**
      * Runs every day at 12:15 AM.
      *
-     * PAID users whose subscription has been PAID
-     * for more than one year are automatically changed
-     * to UNPAID.
      */
-    @Scheduled(cron = "0 15 0 * * *")
+//    @Scheduled(cron = "0 15 0 * * *")
+    @Scheduled(cron = "0 * * * * *")
+
     public void expirePaidSubscriptions() {
 
         Date expiryTime = new Date(
@@ -35,32 +34,32 @@ public class SubscriptionExpiryScheduler {
                         - (365L * 24 * 60 * 60 * 1000)
         );
 
-        List<User> expiredUsers =
-                userRepository.findByStatusAndStatusUpdatedAtBefore(
-                        UserStatus.PAID,
+        List<BusinessOrganization> expiredOrganizations =
+                organizationRepository.findBySubscriptionStatusAndSubscriptionUpdatedAtBefore(
+                        SubscriptionStatus.PAID,
                         expiryTime
                 );
 
-        if (expiredUsers.isEmpty()) {
+        if (expiredOrganizations.isEmpty()) {
             log.info(
-                    "Subscription expiry scheduler: no expired PAID subscriptions found."
+                    "Subscription expiry scheduler: no expired PAID organizations found."
             );
             return;
         }
 
         Date now = new Date();
 
-        for (User user : expiredUsers) {
+        for (BusinessOrganization organization : expiredOrganizations) {
 
-            user.setStatus(UserStatus.UNPAID);
-            user.setStatusUpdatedAt(now);
+            organization.setSubscriptionStatus(SubscriptionStatus.UNPAID);
+            organization.setSubscriptionUpdatedAt(now);
         }
 
-        userRepository.saveAll(expiredUsers);
+        organizationRepository.saveAll(expiredOrganizations);
 
         log.info(
-                "Subscription expiry scheduler: {} user(s) changed from PAID to UNPAID.",
-                expiredUsers.size()
+                "Subscription expiry scheduler: {} organization(s) changed from PAID to UNPAID.",
+                expiredOrganizations.size()
         );
     }
 }

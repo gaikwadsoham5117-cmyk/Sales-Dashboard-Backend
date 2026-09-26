@@ -13,12 +13,12 @@ import lombok.Getter;
 import lombok.NoArgsConstructor;
 import lombok.Setter;
 
-@Document(collection = "users")
 @Getter
 @Setter
+@Builder
 @NoArgsConstructor
 @AllArgsConstructor
-@Builder
+@Document(collection = "users")
 public class User {
 
     @Id
@@ -37,6 +37,9 @@ public class User {
     private String address;
 
     private UserRoles roles;
+
+    @Builder.Default
+    private Boolean enabled = true;
 
     private UserStatus status;
 

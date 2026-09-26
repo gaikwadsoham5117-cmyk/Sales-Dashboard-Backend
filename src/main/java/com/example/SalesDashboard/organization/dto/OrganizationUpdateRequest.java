@@ -16,4 +16,6 @@ public class OrganizationUpdateRequest {
     private String organizationName;
 
     private String subscriptionId;
+
+    private String subscriptionStatus;
 }
