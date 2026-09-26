@@ -197,6 +197,17 @@ public class UserController {
     }
 
 
+
+    @GetMapping("/api/lookup/user/{organizationId}/organizations")
+    public ResponseEntity<List<User>> getUsersByOrganizationId(
+            @PathVariable String organizationId
+    ) {
+
+        return ResponseEntity.ok(
+                userService.findAllUsersById(organizationId)
+        );
+    }
+
     // ============================================================
     // CREATE OWNER
     // ============================================================

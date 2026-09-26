@@ -13,11 +13,6 @@ import org.springframework.stereotype.Component;
 import java.util.Date;
 import java.util.List;
 
-/**
- * Subscription status lives on the ORGANIZATION now, not on
- * every individual user. This scheduler only ever updates
- * BusinessOrganization.subscriptionStatus, never User.status.
- */
 @Component
 @RequiredArgsConstructor
 @Slf4j
@@ -25,12 +20,7 @@ public class TrialExpiryScheduler {
 
     private final BusinessOrganizationRepository organizationRepository;
 
-    /**
-     * Runs every day at 12:05 AM.
-     *
-     * Organizations in TRIAL status for more than 15 days
-     * are automatically changed to UNPAID.
-     */
+
     @Scheduled(cron = "0 5 0 * * *")
     public void expireTrialOrganizations() {
 

@@ -24,8 +24,8 @@ public class SubscriptionExpiryScheduler {
      * Runs every day at 12:15 AM.
      *
      */
-//    @Scheduled(cron = "0 15 0 * * *")
-    @Scheduled(cron = "0 * * * * *")
+    @Scheduled(cron = "0 15 0 * * *")
+//    @Scheduled(cron = "0 * * * * *")
 
     public void expirePaidSubscriptions() {
 
