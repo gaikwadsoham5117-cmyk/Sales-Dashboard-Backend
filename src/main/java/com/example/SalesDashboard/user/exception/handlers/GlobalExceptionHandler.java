@@ -4,6 +4,7 @@ import com.example.SalesDashboard.agent.exception.*;
 import com.example.SalesDashboard.framework.dto.ErrorResponse;
 import com.example.SalesDashboard.framework.exception.EmailNotFoundException;
 import com.example.SalesDashboard.organization.exception.*;
+import com.example.SalesDashboard.subscription.exception.*;
 import com.example.SalesDashboard.user.exception.InactiveAccountException;
 import com.example.SalesDashboard.user.exception.InvalidCredentialsException;
 import com.example.SalesDashboard.user.exception.InvalidFormatPasswordException;
@@ -181,6 +182,31 @@ public class GlobalExceptionHandler {
     @ExceptionHandler(InvalidSubscriptionStatusException.class)
     public ResponseEntity<ErrorResponse> handleInvalidSubscriptionStatusException(InvalidSubscriptionStatusException ex) {
         log.warn("Invalid subscription status: {}", ex.getMessage());
+        ErrorResponse errorResponse = new ErrorResponse(HttpStatus.BAD_REQUEST.value(), ex.getMessage());
+        return ResponseEntity.status(HttpStatus.BAD_REQUEST).body(errorResponse);
+    }
+
+    // =========================================================
+    // SUBSCRIPTION
+    // =========================================================
+
+    @ExceptionHandler(SubscriptionNotFoundException.class)
+    public ResponseEntity<ErrorResponse> handleSubscriptionNotFoundException(SubscriptionNotFoundException ex) {
+        log.warn("Subscription not found: {}", ex.getMessage());
+        ErrorResponse errorResponse = new ErrorResponse(HttpStatus.NOT_FOUND.value(), ex.getMessage());
+        return ResponseEntity.status(HttpStatus.NOT_FOUND).body(errorResponse);
+    }
+
+    @ExceptionHandler(SubscriptionPlanNameRequiredException.class)
+    public ResponseEntity<ErrorResponse> handleSubscriptionPlanNameRequiredException(SubscriptionPlanNameRequiredException ex) {
+        log.warn("Subscription plan name missing: {}", ex.getMessage());
+        ErrorResponse errorResponse = new ErrorResponse(HttpStatus.BAD_REQUEST.value(), ex.getMessage());
+        return ResponseEntity.status(HttpStatus.BAD_REQUEST).body(errorResponse);
+    }
+
+    @ExceptionHandler(InvalidMaxUsersException.class)
+    public ResponseEntity<ErrorResponse> handleInvalidMaxUsersException(InvalidMaxUsersException ex) {
+        log.warn("Invalid max users: {}", ex.getMessage());
         ErrorResponse errorResponse = new ErrorResponse(HttpStatus.BAD_REQUEST.value(), ex.getMessage());
         return ResponseEntity.status(HttpStatus.BAD_REQUEST).body(errorResponse);
     }

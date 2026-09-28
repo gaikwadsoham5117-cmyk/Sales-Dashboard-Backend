@@ -3,6 +3,9 @@ package com.example.SalesDashboard.subscription.service;
 import com.example.SalesDashboard.subscription.dto.SubscriptionCreateRequest;
 import com.example.SalesDashboard.subscription.dto.SubscriptionUpdateRequest;
 import com.example.SalesDashboard.subscription.entity.Subscription;
+import com.example.SalesDashboard.subscription.exception.InvalidMaxUsersException;
+import com.example.SalesDashboard.subscription.exception.SubscriptionNotFoundException;
+import com.example.SalesDashboard.subscription.exception.SubscriptionPlanNameRequiredException;
 import com.example.SalesDashboard.subscription.repository.SubscriptionRepository;
 
 import lombok.RequiredArgsConstructor;
@@ -28,7 +31,7 @@ public class SubscriptionService {
         if (request.getPlanName() == null
                 || request.getPlanName().isBlank()) {
 
-            throw new IllegalArgumentException(
+            throw new SubscriptionPlanNameRequiredException(
                     "Plan name is required"
             );
         }
@@ -36,7 +39,7 @@ public class SubscriptionService {
         if (request.getMaxUsers() == null
                 || request.getMaxUsers() <= 0) {
 
-            throw new IllegalArgumentException(
+            throw new InvalidMaxUsersException(
                     "Maximum users must be greater than 0"
             );
         }
@@ -82,7 +85,7 @@ public class SubscriptionService {
 
         return subscriptionRepository.findById(id)
                 .orElseThrow(() ->
-                        new IllegalArgumentException(
+                        new SubscriptionNotFoundException(
                                 "Subscription not found: " + id
                         )
                 );
@@ -110,7 +113,7 @@ public class SubscriptionService {
 
             if (request.getMaxUsers() <= 0) {
 
-                throw new IllegalArgumentException(
+                throw new InvalidMaxUsersException(
                         "Maximum users must be greater than 0"
                 );
             }
@@ -140,7 +143,7 @@ public class SubscriptionService {
 
         if (!subscriptionRepository.existsById(id)) {
 
-            throw new IllegalArgumentException(
+            throw new SubscriptionNotFoundException(
                     "Subscription not found: " + id
             );
         }
