@@ -4,6 +4,10 @@ import com.example.SalesDashboard.organization.dto.OrganizationCreateRequest;
 import com.example.SalesDashboard.organization.dto.OrganizationUpdateRequest;
 import com.example.SalesDashboard.organization.entity.BusinessOrganization;
 import com.example.SalesDashboard.organization.entity.SubscriptionStatus;
+import com.example.SalesDashboard.organization.exception.InvalidSubscriptionStatusException;
+import com.example.SalesDashboard.organization.exception.OrganizationAlreadyExistException;
+import com.example.SalesDashboard.organization.exception.OrganizationNameRequiredException;
+import com.example.SalesDashboard.organization.exception.OrganizationNotFoundException;
 import com.example.SalesDashboard.organization.repository.BusinessOrganizationRepository;
 
 import lombok.RequiredArgsConstructor;
@@ -29,7 +33,7 @@ public class BusinessOrganizationService {
         if (request.getOrganizationName() == null
                 || request.getOrganizationName().isBlank()) {
 
-            throw new IllegalArgumentException(
+            throw new OrganizationNameRequiredException(
                     "Organization name is required"
             );
         }
@@ -38,7 +42,7 @@ public class BusinessOrganizationService {
                 .existsByNameIgnoreCase(
                         request.getOrganizationName())) {
 
-            throw new IllegalArgumentException(
+            throw new OrganizationAlreadyExistException(
                     "Organization already exists: "
                             + request.getOrganizationName()
             );
@@ -85,7 +89,7 @@ public class BusinessOrganizationService {
 
         return organizationRepository.findById(id)
                 .orElseThrow(() ->
-                        new IllegalArgumentException(
+                        new OrganizationNotFoundException(
                                 "Organization not found: " + id
                         )
                 );
@@ -139,7 +143,7 @@ public class BusinessOrganizationService {
 
             } catch (IllegalArgumentException e) {
 
-                throw new IllegalArgumentException(
+                throw new InvalidSubscriptionStatusException(
                         "Invalid subscription status: "
                                 + request.getSubscriptionStatus()
                                 + ". Allowed values: TRIAL, PAID, UNPAID"
@@ -181,7 +185,7 @@ public class BusinessOrganizationService {
 
         if (!organizationRepository.existsById(id)) {
 
-            throw new IllegalArgumentException(
+            throw new OrganizationNotFoundException(
                     "Organization not found: " + id
             );
         }

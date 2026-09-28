@@ -3,6 +3,7 @@ package com.example.SalesDashboard.user.exception.handlers;
 import com.example.SalesDashboard.agent.exception.*;
 import com.example.SalesDashboard.framework.dto.ErrorResponse;
 import com.example.SalesDashboard.framework.exception.EmailNotFoundException;
+import com.example.SalesDashboard.organization.exception.*;
 import com.example.SalesDashboard.user.exception.InactiveAccountException;
 import com.example.SalesDashboard.user.exception.InvalidCredentialsException;
 import com.example.SalesDashboard.user.exception.InvalidFormatPasswordException;
@@ -13,9 +14,14 @@ import org.slf4j.LoggerFactory;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.HttpStatusCode;
 import org.springframework.http.ResponseEntity;
+import org.springframework.validation.FieldError;
+import org.springframework.web.bind.MethodArgumentNotValidException;
 import org.springframework.web.bind.annotation.ControllerAdvice;
 import org.springframework.web.bind.annotation.ExceptionHandler;
 import org.springframework.web.server.ResponseStatusException;
+
+import java.util.LinkedHashMap;
+import java.util.Map;
 
 @ControllerAdvice
 public class GlobalExceptionHandler {
@@ -26,16 +32,16 @@ public class GlobalExceptionHandler {
     // VALIDATION  (@Valid on request bodies)
     // =========================================================
 
-//    @ExceptionHandler(MethodArgumentNotValidException.class)
-//    public ResponseEntity<ApiResponse<Map<String, String>>> handleValidation(MethodArgumentNotValidException ex) {
-//        Map<String, String> errors = new LinkedHashMap<>();
-//        for (FieldError error : ex.getBindingResult().getFieldErrors()) {
-//            errors.put(error.getField(), error.getDefaultMessage());
-//        }
-//        log.warn("Validation failed: {}", errors);
-//        return ResponseEntity.status(HttpStatus.BAD_REQUEST)
-//                .body(new ApiResponse<>(false, "Validation failed", errors));
-//    }
+    @ExceptionHandler(MethodArgumentNotValidException.class)
+    public ResponseEntity<ErrorResponse> handleValidation(MethodArgumentNotValidException ex) {
+        Map<String, String> errors = new LinkedHashMap<>();
+        for (FieldError error : ex.getBindingResult().getFieldErrors()) {
+            errors.put(error.getField(), error.getDefaultMessage());
+        }
+        log.warn("Validation failed: {}", errors);
+        return ResponseEntity.status(HttpStatus.BAD_REQUEST)
+                .body(new ErrorResponse(HttpStatus.BAD_REQUEST.value(), "Validation failed", errors));
+    }
 
     // =========================================================
     // USER
@@ -145,6 +151,38 @@ public class GlobalExceptionHandler {
         log.warn("Agent returned error: {}", ex.getMessage());
         ErrorResponse errorResponse = new ErrorResponse(HttpStatus.BAD_GATEWAY.value(), ex.getMessage());
         return ResponseEntity.status(HttpStatus.BAD_GATEWAY).body(errorResponse);
+    }
+
+    // =========================================================
+    // ORGANIZATION
+    // =========================================================
+
+    @ExceptionHandler(OrganizationNotFoundException.class)
+    public ResponseEntity<ErrorResponse> handleOrganizationNotFoundException(OrganizationNotFoundException ex) {
+        log.warn("Organization not found: {}", ex.getMessage());
+        ErrorResponse errorResponse = new ErrorResponse(HttpStatus.NOT_FOUND.value(), ex.getMessage());
+        return ResponseEntity.status(HttpStatus.NOT_FOUND).body(errorResponse);
+    }
+
+    @ExceptionHandler(OrganizationAlreadyExistException.class)
+    public ResponseEntity<ErrorResponse> handleOrganizationAlreadyExistException(OrganizationAlreadyExistException ex) {
+        log.warn("Organization creation failed: {}", ex.getMessage());
+        ErrorResponse errorResponse = new ErrorResponse(HttpStatus.CONFLICT.value(), ex.getMessage());
+        return ResponseEntity.status(HttpStatus.CONFLICT).body(errorResponse);
+    }
+
+    @ExceptionHandler(OrganizationNameRequiredException.class)
+    public ResponseEntity<ErrorResponse> handleOrganizationNameRequiredException(OrganizationNameRequiredException ex) {
+        log.warn("Organization name missing: {}", ex.getMessage());
+        ErrorResponse errorResponse = new ErrorResponse(HttpStatus.BAD_REQUEST.value(), ex.getMessage());
+        return ResponseEntity.status(HttpStatus.BAD_REQUEST).body(errorResponse);
+    }
+
+    @ExceptionHandler(InvalidSubscriptionStatusException.class)
+    public ResponseEntity<ErrorResponse> handleInvalidSubscriptionStatusException(InvalidSubscriptionStatusException ex) {
+        log.warn("Invalid subscription status: {}", ex.getMessage());
+        ErrorResponse errorResponse = new ErrorResponse(HttpStatus.BAD_REQUEST.value(), ex.getMessage());
+        return ResponseEntity.status(HttpStatus.BAD_REQUEST).body(errorResponse);
     }
 
     // =========================================================
