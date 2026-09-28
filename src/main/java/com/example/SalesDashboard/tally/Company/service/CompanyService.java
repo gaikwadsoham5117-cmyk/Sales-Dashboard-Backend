@@ -2,14 +2,16 @@ package com.example.SalesDashboard.tally.Company.service;
 
 import com.example.SalesDashboard.agent.service.AgentRelayService;
 import com.example.SalesDashboard.tally.Company.dto.CompanyDto;
+import com.example.SalesDashboard.tally.Company.exception.CompanyAgentStatusException;
+import com.example.SalesDashboard.tally.Company.exception.CompanyEmptyResponseException;
+import com.example.SalesDashboard.tally.Company.exception.CompanyRequestPreparationException;
+import com.example.SalesDashboard.tally.Company.exception.CompanyResponseParseException;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.node.ObjectNode;
 import lombok.RequiredArgsConstructor;
 import org.springframework.beans.factory.annotation.Value;
-import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Service;
-import org.springframework.web.server.ResponseStatusException;
 
 import java.util.ArrayList;
 import java.util.List;
@@ -54,52 +56,29 @@ public class CompanyService {
         try {
             jsonBody = objectMapper.writeValueAsString(payload);
         } catch (Exception e) {
-            throw new ResponseStatusException(
-                    HttpStatus.INTERNAL_SERVER_ERROR,
-                    "Failed to prepare Tally company request"
+            throw new CompanyRequestPreparationException("Failed to prepare Tally company request"
             );
         }
 
-        AgentRelayService.RelayResponse response;
 
-        try {
-            /*
-             * Agent selection is handled inside AgentRelayService
-             * using the authenticated user's organization.
-             *
-             * No agentId is required from the frontend.
-             */
-            response = agentRelayService.relay(
-                    userId,
-                    "POST",
-                    headers,
-                    jsonBody
-            );
-
-        } catch (ResponseStatusException e) {
-            throw e;
-
-        } catch (Exception e) {
-            throw new ResponseStatusException(
-                    HttpStatus.BAD_GATEWAY,
-                    "Failed to communicate with Tally Agent"
-            );
-        }
+        AgentRelayService.RelayResponse response =
+                agentRelayService.relay(
+                        userId,
+                        "POST",
+                        headers,
+                        jsonBody
+                );
 
         if (response == null) {
-            throw new ResponseStatusException(
-                    HttpStatus.BAD_GATEWAY,
-                    "Empty response received from Tally Agent"
+            throw new CompanyEmptyResponseException("Empty response received from Tally Agent"
             );
         }
 
         if (response.status() < 200
                 || response.status() >= 300) {
 
-            throw new ResponseStatusException(
-                    HttpStatus.BAD_GATEWAY,
-                    "Tally Agent returned HTTP status "
-                            + response.status()
+            throw new CompanyAgentStatusException("Tally Agent returned HTTP status "
+                    + response.status()
             );
         }
 
@@ -108,9 +87,7 @@ public class CompanyService {
         if (rawResponse == null
                 || rawResponse.isBlank()) {
 
-            throw new ResponseStatusException(
-                    HttpStatus.BAD_GATEWAY,
-                    "Empty response received from Tally"
+            throw new CompanyEmptyResponseException("Empty response received from Tally"
             );
         }
 
@@ -168,9 +145,7 @@ public class CompanyService {
 
             if (!collection.isArray()) {
 
-                throw new ResponseStatusException(
-                        HttpStatus.BAD_GATEWAY,
-                        "Invalid company response received from Tally"
+                throw new CompanyResponseParseException("Invalid company response received from Tally"
                 );
             }
 
@@ -206,15 +181,13 @@ public class CompanyService {
 
             return results;
 
-        } catch (ResponseStatusException e) {
+        } catch (CompanyResponseParseException e) {
 
             throw e;
 
         } catch (Exception e) {
 
-            throw new ResponseStatusException(
-                    HttpStatus.BAD_GATEWAY,
-                    "Failed to parse Tally company response"
+            throw new CompanyResponseParseException("Failed to parse Tally company response"
             );
         }
     }

@@ -5,6 +5,7 @@ import com.example.SalesDashboard.framework.dto.ErrorResponse;
 import com.example.SalesDashboard.framework.exception.EmailNotFoundException;
 import com.example.SalesDashboard.organization.exception.*;
 import com.example.SalesDashboard.subscription.exception.*;
+import com.example.SalesDashboard.tally.Company.exception.*;
 import com.example.SalesDashboard.user.exception.InactiveAccountException;
 import com.example.SalesDashboard.user.exception.InvalidCredentialsException;
 import com.example.SalesDashboard.user.exception.InvalidFormatPasswordException;
@@ -209,6 +210,38 @@ public class GlobalExceptionHandler {
         log.warn("Invalid max users: {}", ex.getMessage());
         ErrorResponse errorResponse = new ErrorResponse(HttpStatus.BAD_REQUEST.value(), ex.getMessage());
         return ResponseEntity.status(HttpStatus.BAD_REQUEST).body(errorResponse);
+    }
+
+    // =========================================================
+    // TALLY COMPANY
+    // =========================================================
+
+    @ExceptionHandler(CompanyRequestPreparationException.class)
+    public ResponseEntity<ErrorResponse> handleCompanyRequestPreparationException(CompanyRequestPreparationException ex) {
+        log.error("Tally company request preparation failed: {}", ex.getMessage());
+        ErrorResponse errorResponse = new ErrorResponse(HttpStatus.INTERNAL_SERVER_ERROR.value(), ex.getMessage());
+        return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR).body(errorResponse);
+    }
+
+    @ExceptionHandler(CompanyEmptyResponseException.class)
+    public ResponseEntity<ErrorResponse> handleCompanyEmptyResponseException(CompanyEmptyResponseException ex) {
+        log.warn("Empty Tally company response: {}", ex.getMessage());
+        ErrorResponse errorResponse = new ErrorResponse(HttpStatus.BAD_GATEWAY.value(), ex.getMessage());
+        return ResponseEntity.status(HttpStatus.BAD_GATEWAY).body(errorResponse);
+    }
+
+    @ExceptionHandler(CompanyAgentStatusException.class)
+    public ResponseEntity<ErrorResponse> handleCompanyAgentStatusException(CompanyAgentStatusException ex) {
+        log.warn("Tally Agent returned failure status: {}", ex.getMessage());
+        ErrorResponse errorResponse = new ErrorResponse(HttpStatus.BAD_GATEWAY.value(), ex.getMessage());
+        return ResponseEntity.status(HttpStatus.BAD_GATEWAY).body(errorResponse);
+    }
+
+    @ExceptionHandler(CompanyResponseParseException.class)
+    public ResponseEntity<ErrorResponse> handleCompanyResponseParseException(CompanyResponseParseException ex) {
+        log.warn("Tally company response could not be parsed: {}", ex.getMessage());
+        ErrorResponse errorResponse = new ErrorResponse(HttpStatus.BAD_GATEWAY.value(), ex.getMessage());
+        return ResponseEntity.status(HttpStatus.BAD_GATEWAY).body(errorResponse);
     }
 
     // =========================================================
