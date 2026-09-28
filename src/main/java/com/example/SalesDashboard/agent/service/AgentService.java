@@ -2,15 +2,16 @@ package com.example.SalesDashboard.agent.service;
 
 import com.example.SalesDashboard.agent.dto.CreateAgentRequest;
 import com.example.SalesDashboard.agent.entity.Agent;
+import com.example.SalesDashboard.agent.exception.AgentNotFoundException;
+import com.example.SalesDashboard.agent.exception.AgentOrganizationNotAssignedException;
+import com.example.SalesDashboard.agent.exception.AgentUserNotFoundException;
 import com.example.SalesDashboard.agent.repository.AgentRepository;
 import com.example.SalesDashboard.user.entity.User;
 import com.example.SalesDashboard.user.repository.UserRepository;
 
 import lombok.RequiredArgsConstructor;
 
-import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Service;
-import org.springframework.web.server.ResponseStatusException;
 
 import java.security.SecureRandom;
 import java.time.LocalDateTime;
@@ -37,9 +38,9 @@ public class AgentService {
 
         String agentId =
                 "agent-" +
-                UUID.randomUUID()
-                        .toString()
-                        .substring(0, 12);
+                        UUID.randomUUID()
+                                .toString()
+                                .substring(0, 12);
 
         String agentKey =
                 generateAgentKey();
@@ -103,9 +104,7 @@ public class AgentService {
         User user =
                 userRepository.findById(userId)
                         .orElseThrow(() ->
-                                new ResponseStatusException(
-                                        HttpStatus.NOT_FOUND,
-                                        "User not found"
+                                new AgentUserNotFoundException("User not found"
                                 )
                         );
 
@@ -115,9 +114,7 @@ public class AgentService {
         if (organizationId == null
                 || organizationId.isBlank()) {
 
-            throw new ResponseStatusException(
-                    HttpStatus.BAD_REQUEST,
-                    "User is not associated with an organization"
+            throw new AgentOrganizationNotAssignedException("User is not associated with an organization"
             );
         }
 
@@ -138,9 +135,9 @@ public class AgentService {
 
         String agentId =
                 "agent-" +
-                UUID.randomUUID()
-                        .toString()
-                        .substring(0, 12);
+                        UUID.randomUUID()
+                                .toString()
+                                .substring(0, 12);
 
         String agentKey =
                 generateAgentKey();
@@ -201,9 +198,7 @@ public class AgentService {
                 agentRepository
                         .findByAgentId(agentId)
                         .orElseThrow(() ->
-                                new ResponseStatusException(
-                                        HttpStatus.NOT_FOUND,
-                                        "Agent not found"
+                                new AgentNotFoundException("Agent not found"
                                 )
                         );
 
@@ -211,9 +206,7 @@ public class AgentService {
 
             // 404 instead of 403
             // so we don't reveal that the agent exists
-            throw new ResponseStatusException(
-                    HttpStatus.NOT_FOUND,
-                    "Agent not found"
+            throw new AgentNotFoundException("Agent not found"
             );
         }
 
@@ -247,9 +240,7 @@ public class AgentService {
         User user =
                 userRepository.findById(userId)
                         .orElseThrow(() ->
-                                new ResponseStatusException(
-                                        HttpStatus.NOT_FOUND,
-                                        "User not found"
+                                new AgentUserNotFoundException("User not found"
                                 )
                         );
 
@@ -259,9 +250,7 @@ public class AgentService {
         if (organizationId == null
                 || organizationId.isBlank()) {
 
-            throw new ResponseStatusException(
-                    HttpStatus.BAD_REQUEST,
-                    "User is not associated with an organization"
+            throw new AgentOrganizationNotAssignedException("User is not associated with an organization"
             );
         }
 
@@ -269,9 +258,7 @@ public class AgentService {
                 agentRepository
                         .findByAgentId(agentId)
                         .orElseThrow(() ->
-                                new ResponseStatusException(
-                                        HttpStatus.NOT_FOUND,
-                                        "Agent not found"
+                                new AgentNotFoundException("Agent not found"
                                 )
                         );
 
@@ -280,9 +267,7 @@ public class AgentService {
         )) {
 
             // Do not reveal another organization's agent
-            throw new ResponseStatusException(
-                    HttpStatus.NOT_FOUND,
-                    "Agent not found"
+            throw new AgentNotFoundException("Agent not found"
             );
         }
 
@@ -319,32 +304,28 @@ public class AgentService {
     }
 
     public List<Agent> getOrganizationAgentsForUser(
-        String userId
-) {
+            String userId
+    ) {
 
-    User user =
-            userRepository.findById(userId)
-                    .orElseThrow(() ->
-                            new ResponseStatusException(
-                                    HttpStatus.NOT_FOUND,
-                                    "User not found"
-                            )
-                    );
+        User user =
+                userRepository.findById(userId)
+                        .orElseThrow(() ->
+                                new AgentUserNotFoundException("User not found"
+                                )
+                        );
 
-    String organizationId =
-            user.getOrganizationId();
+        String organizationId =
+                user.getOrganizationId();
 
-    if (organizationId == null
-            || organizationId.isBlank()) {
+        if (organizationId == null
+                || organizationId.isBlank()) {
 
-        throw new ResponseStatusException(
-                HttpStatus.BAD_REQUEST,
-                "User is not associated with an organization"
+            throw new AgentOrganizationNotAssignedException("User is not associated with an organization"
+            );
+        }
+
+        return agentRepository.findByOrganizationId(
+                organizationId
         );
     }
-
-    return agentRepository.findByOrganizationId(
-            organizationId
-    );
-}
 }

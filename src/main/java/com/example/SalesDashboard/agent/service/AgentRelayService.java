@@ -1,6 +1,14 @@
 package com.example.SalesDashboard.agent.service;
 
 import com.example.SalesDashboard.agent.entity.Agent;
+import com.example.SalesDashboard.agent.exception.AgentCommunicationException;
+import com.example.SalesDashboard.agent.exception.AgentIdRequiredException;
+import com.example.SalesDashboard.agent.exception.AgentNotFoundException;
+import com.example.SalesDashboard.agent.exception.AgentOfflineException;
+import com.example.SalesDashboard.agent.exception.AgentOrganizationNotAssignedException;
+import com.example.SalesDashboard.agent.exception.AgentResponseException;
+import com.example.SalesDashboard.agent.exception.AgentTimeoutException;
+import com.example.SalesDashboard.agent.exception.AgentUserNotFoundException;
 import com.example.SalesDashboard.user.entity.User;
 import com.example.SalesDashboard.user.repository.UserRepository;
 
@@ -11,9 +19,7 @@ import com.fasterxml.jackson.databind.node.ObjectNode;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 
-import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Service;
-import org.springframework.web.server.ResponseStatusException;
 import org.springframework.web.socket.TextMessage;
 import org.springframework.web.socket.WebSocketSession;
 
@@ -136,9 +142,7 @@ public class AgentRelayService {
                 userRepository
                         .findById(userId)
                         .orElseThrow(() ->
-                                new ResponseStatusException(
-                                        HttpStatus.NOT_FOUND,
-                                        "User not found"
+                                new AgentUserNotFoundException("User not found"
                                 )
                         );
 
@@ -155,9 +159,7 @@ public class AgentRelayService {
                         )
                         .findFirst()
                         .orElseThrow(() ->
-                                new ResponseStatusException(
-                                        HttpStatus.NOT_FOUND,
-                                        "Tally Agent not found"
+                                new AgentNotFoundException("Tally Agent not found"
                                 )
                         );
 
@@ -278,9 +280,7 @@ public class AgentRelayService {
                         )
                 );
 
-                throw new ResponseStatusException(
-                        HttpStatus.SERVICE_UNAVAILABLE,
-                        "Tally Agent is offline"
+                throw new AgentOfflineException("Tally Agent is offline"
                 );
             }
 
@@ -307,7 +307,7 @@ public class AgentRelayService {
             );
 
 
-        } catch (ResponseStatusException e) {
+        } catch (AgentOfflineException e) {
 
             throw e;
 
@@ -319,10 +319,8 @@ public class AgentRelayService {
                     e
             );
 
-            throw new ResponseStatusException(
-                    HttpStatus.BAD_GATEWAY,
-                    "Failed to send request to Tally Agent: "
-                            + e.getMessage()
+            throw new AgentCommunicationException("Failed to send request to Tally Agent: "
+                    + e.getMessage()
             );
         }
 
@@ -347,12 +345,10 @@ public class AgentRelayService {
 
             if (cause instanceof TimeoutException) {
 
-                throw new ResponseStatusException(
-                        HttpStatus.GATEWAY_TIMEOUT,
-                        "Tally Agent did not respond "
-                                + "within 20 seconds. "
-                                + "Check TallyPrime and the "
-                                + "Tally Agent on that PC."
+                throw new AgentTimeoutException("Tally Agent did not respond "
+                        + "within 20 seconds. "
+                        + "Check TallyPrime and the "
+                        + "Tally Agent on that PC."
                 );
             }
 
@@ -363,10 +359,8 @@ public class AgentRelayService {
                             : cause.getMessage();
 
 
-            throw new ResponseStatusException(
-                    HttpStatus.BAD_GATEWAY,
-                    "Error waiting for Tally Agent response: "
-                            + message
+            throw new AgentCommunicationException("Error waiting for Tally Agent response: "
+                    + message
             );
 
 
@@ -379,10 +373,8 @@ public class AgentRelayService {
                     e
             );
 
-            throw new ResponseStatusException(
-                    HttpStatus.BAD_GATEWAY,
-                    "Interrupted while waiting for "
-                            + "Tally Agent response"
+            throw new AgentCommunicationException("Interrupted while waiting for "
+                    + "Tally Agent response"
             );
         }
 
@@ -414,10 +406,8 @@ public class AgentRelayService {
             );
 
 
-            throw new ResponseStatusException(
-                    HttpStatus.BAD_GATEWAY,
-                    "Tally Agent error: "
-                            + error
+            throw new AgentResponseException("Tally Agent error: "
+                    + error
             );
         }
 
@@ -455,9 +445,7 @@ public class AgentRelayService {
                 userRepository
                         .findById(userId)
                         .orElseThrow(() ->
-                                new ResponseStatusException(
-                                        HttpStatus.NOT_FOUND,
-                                        "User not found"
+                                new AgentUserNotFoundException("User not found"
                                 )
                         );
 
@@ -473,9 +461,7 @@ public class AgentRelayService {
         if (organizationId == null
                 || organizationId.isBlank()) {
 
-            throw new ResponseStatusException(
-                    HttpStatus.BAD_REQUEST,
-                    "User is not associated with an organization"
+            throw new AgentOrganizationNotAssignedException("User is not associated with an organization"
             );
         }
 
@@ -494,9 +480,7 @@ public class AgentRelayService {
         if (agents == null
                 || agents.isEmpty()) {
 
-            throw new ResponseStatusException(
-                    HttpStatus.NOT_FOUND,
-                    "No Tally Agent found for your organization"
+            throw new AgentNotFoundException("No Tally Agent found for your organization"
             );
         }
 
@@ -593,10 +577,8 @@ public class AgentRelayService {
         // NO CONNECTED AGENT
         // ========================================================
 
-        throw new ResponseStatusException(
-                HttpStatus.SERVICE_UNAVAILABLE,
-                "No connected Tally Agent found for your organization. "
-                        + "Start the Tally Agent on the required PC."
+        throw new AgentOfflineException("No connected Tally Agent found for your organization. "
+                + "Start the Tally Agent on the required PC."
         );
     }
 
@@ -620,9 +602,7 @@ public class AgentRelayService {
         if (agentId == null
                 || agentId.isBlank()) {
 
-            throw new ResponseStatusException(
-                    HttpStatus.BAD_REQUEST,
-                    "agentId is required"
+            throw new AgentIdRequiredException("agentId is required"
             );
         }
 
@@ -635,9 +615,7 @@ public class AgentRelayService {
                 userRepository
                         .findById(userId)
                         .orElseThrow(() ->
-                                new ResponseStatusException(
-                                        HttpStatus.NOT_FOUND,
-                                        "User not found"
+                                new AgentUserNotFoundException("User not found"
                                 )
                         );
 
@@ -649,9 +627,7 @@ public class AgentRelayService {
         if (organizationId == null
                 || organizationId.isBlank()) {
 
-            throw new ResponseStatusException(
-                    HttpStatus.BAD_REQUEST,
-                    "User is not associated with an organization"
+            throw new AgentOrganizationNotAssignedException("User is not associated with an organization"
             );
         }
 
@@ -674,10 +650,8 @@ public class AgentRelayService {
                         )
                         .findFirst()
                         .orElseThrow(() ->
-                                new ResponseStatusException(
-                                        HttpStatus.NOT_FOUND,
-                                        "Tally Agent not found "
-                                                + "for your organization"
+                                new AgentNotFoundException("Tally Agent not found "
+                                        + "for your organization"
                                 )
                         );
 
@@ -690,9 +664,7 @@ public class AgentRelayService {
                 agent.getOrganizationId()
         )) {
 
-            throw new ResponseStatusException(
-                    HttpStatus.NOT_FOUND,
-                    "Tally Agent not found"
+            throw new AgentNotFoundException("Tally Agent not found"
             );
         }
 
@@ -706,11 +678,9 @@ public class AgentRelayService {
                         agent.getAgentId()
                 )) {
 
-            throw new ResponseStatusException(
-                    HttpStatus.SERVICE_UNAVAILABLE,
-                    "Selected Tally Agent is offline. "
-                            + "Start the Tally Agent on the "
-                            + "selected PC."
+            throw new AgentOfflineException("Selected Tally Agent is offline. "
+                    + "Start the Tally Agent on the "
+                    + "selected PC."
             );
         }
 
@@ -725,9 +695,7 @@ public class AgentRelayService {
         if (session == null
                 || !session.isOpen()) {
 
-            throw new ResponseStatusException(
-                    HttpStatus.SERVICE_UNAVAILABLE,
-                    "Selected Tally Agent WebSocket is not connected"
+            throw new AgentOfflineException("Selected Tally Agent WebSocket is not connected"
             );
         }
 

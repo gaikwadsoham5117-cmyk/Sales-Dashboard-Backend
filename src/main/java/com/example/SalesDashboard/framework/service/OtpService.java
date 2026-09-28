@@ -1,5 +1,6 @@
 package com.example.SalesDashboard.framework.service;
 
+import com.example.SalesDashboard.framework.exception.EmailNotFoundException;
 import com.example.SalesDashboard.framework.security.JwtUtil;
 import com.example.SalesDashboard.otp.entity.Otp;
 import com.example.SalesDashboard.otp.repository.OtpRepository;
@@ -18,16 +19,18 @@ import java.util.Random;
 @Service
 public class OtpService {
 
-    private OtpRepository otpRepository;
+    private final OtpRepository otpRepository;
     private final UserRepository userRepository;
     private final JavaMailSender mailSender;
     private final JwtUtil jwtUtil;
     private final Random random = new SecureRandom();
 
-    public OtpService(UserRepository userRepository,
+    public OtpService(OtpRepository otpRepository,
+                      UserRepository userRepository,
                       JavaMailSender mailSender,
                       JwtUtil jwtUtil
     ) {
+        this.otpRepository = otpRepository;
         this.userRepository = userRepository;
         this.mailSender = mailSender;
         this.jwtUtil = jwtUtil;
@@ -47,7 +50,7 @@ public class OtpService {
             sendOtpEmail(email, otp);
             return ResponseEntity.ok("OTP has been sent to your email.");
         } else {
-            throw new RuntimeException("Error: Email not found.");
+            throw new EmailNotFoundException("Email not found: " + email);
         }
     }
 
