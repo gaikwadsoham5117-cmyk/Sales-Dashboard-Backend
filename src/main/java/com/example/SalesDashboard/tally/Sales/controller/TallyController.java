@@ -25,19 +25,6 @@ import java.util.List;
 public class TallyController {
 
     private final TallyService tallyService;
-    // =========================================================
-    // COMPANY-WISE SALES VOUCHERS
-    // =========================================================
-    //
-    // GET:
-    // /api/tally/{companyName}/sales-vouchers
-    //
-    // No agentId required.
-    //
-    // Backend automatically identifies the authenticated user,
-    // organization and connected Tally Agent.
-    //
-    // =========================================================
 
     @Operation(
 
