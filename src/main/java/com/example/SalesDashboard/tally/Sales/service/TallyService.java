@@ -10,6 +10,16 @@ import com.example.SalesDashboard.tally.Sales.dto.SalesVoucherGSTRateDTO;
 import com.example.SalesDashboard.tally.Sales.dto.SalesVoucherItemDTO;
 import com.example.SalesDashboard.tally.Sales.dto.SalesVoucherLedgerDTO;
 import com.example.SalesDashboard.tally.Sales.dto.TallyRequest;
+import com.example.SalesDashboard.tally.Sales.exception.InvalidSalesDateRangeException;
+import com.example.SalesDashboard.tally.Sales.exception.SalesAgentStatusException;
+import com.example.SalesDashboard.tally.Sales.exception.SalesCompanyNameRequiredException;
+import com.example.SalesDashboard.tally.Sales.exception.SalesDateRangeRequiredException;
+import com.example.SalesDashboard.tally.Sales.exception.SalesDateRangeTooLargeException;
+import com.example.SalesDashboard.tally.Sales.exception.SalesEmptyResponseException;
+import com.example.SalesDashboard.tally.Sales.exception.SalesInvalidResponseException;
+import com.example.SalesDashboard.tally.Sales.exception.SalesRequestPreparationException;
+import com.example.SalesDashboard.tally.Sales.exception.SalesTallyErrorException;
+import com.example.SalesDashboard.user.exception.UserNotAuthenticatedException;
 
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
@@ -18,10 +28,8 @@ import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 
 import org.springframework.beans.factory.annotation.Value;
-import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.stereotype.Service;
-import org.springframework.web.server.ResponseStatusException;
 
 import java.math.BigDecimal;
 import java.time.LocalDate;
@@ -49,12 +57,27 @@ public class TallyService {
     private String tallyCompanyName;
 
     // =========================================================
-    // DATE-RANGE SAFETY LIMIT
+    // SAFETY LIMITS
     // =========================================================
-    // Keep one backend request limited to roughly one month.
-    // This protects the Java service from accidentally receiving
-    // a very large Tally response. The actual filtering is still
-    // performed inside Tally by the date formula below.
+    //
+    // MAX_DATE_RANGE_DAYS:
+    //   Hard cap on how wide a single date-range request can be.
+    //   The Tally-side $Date filter keeps a single well-scoped
+    //   request cheap, but nothing stops a caller asking for
+    //   years of history in one call - cap it here regardless of
+    //   how well the Tally-side filter performs.
+    //
+    // SUSPICIOUS_RESULT_SIZE:
+    //   A same-day (or few-day) request should never realistically
+    //   return tens of thousands of Sales vouchers. If it does,
+    //   that is a strong signal the Tally-side $Date filter is NOT
+    //   being applied (e.g. after a TallyAPIConnector upgrade
+    //   changes how "Filters" / "System : Formulae" is handled)
+    //   and Tally is silently returning far more than requested.
+    //   We do not act on this automatically (that would just be
+    //   Java-side filtering again) - we log loudly so it gets
+    //   noticed before it becomes an OOM incident.
+    //
     // =========================================================
 
     private static final long MAX_DATE_RANGE_DAYS = 31;
@@ -104,9 +127,7 @@ public class TallyService {
 
         if (body == null || body.isBlank()) {
 
-            throw new ResponseStatusException(
-                    HttpStatus.BAD_GATEWAY,
-                    "Tally returned an empty response"
+            throw new SalesEmptyResponseException("Tally returned an empty response"
             );
         }
 
@@ -118,9 +139,7 @@ public class TallyService {
 
         } catch (Exception e) {
 
-            throw new ResponseStatusException(
-                    HttpStatus.BAD_GATEWAY,
-                    "Tally returned an invalid response"
+            throw new SalesInvalidResponseException("Tally returned an invalid response"
             );
         }
 
@@ -130,11 +149,9 @@ public class TallyService {
 
         if (!"1".equals(status)) {
 
-            throw new ResponseStatusException(
-                    HttpStatus.BAD_GATEWAY,
-                    "Tally reported an error for company '"
-                            + companyName
-                            + "'"
+            throw new SalesTallyErrorException("Tally reported an error for company '"
+                    + companyName
+                    + "'"
             );
         }
 
@@ -189,16 +206,12 @@ public class TallyService {
         validateCompanyName(companyName);
 
         if (from == null || to == null) {
-            throw new ResponseStatusException(
-                    HttpStatus.BAD_REQUEST,
-                    "From and To dates are required"
+            throw new SalesDateRangeRequiredException("From and To dates are required"
             );
         }
 
         if (from.isAfter(to)) {
-            throw new ResponseStatusException(
-                    HttpStatus.BAD_REQUEST,
-                    "From date cannot be after To date"
+            throw new InvalidSalesDateRangeException("From date cannot be after To date"
             );
         }
 
@@ -206,11 +219,9 @@ public class TallyService {
                 ChronoUnit.DAYS.between(from, to);
 
         if (requestedDays > MAX_DATE_RANGE_DAYS) {
-            throw new ResponseStatusException(
-                    HttpStatus.BAD_REQUEST,
-                    "Maximum allowed date range is "
-                            + MAX_DATE_RANGE_DAYS
-                            + " days"
+            throw new SalesDateRangeTooLargeException("Maximum allowed date range is "
+                    + MAX_DATE_RANGE_DAYS
+                    + " days"
             );
         }
 
@@ -230,9 +241,7 @@ public class TallyService {
         String body = response.getBody();
 
         if (body == null || body.isBlank()) {
-            throw new ResponseStatusException(
-                    HttpStatus.BAD_GATEWAY,
-                    "Tally returned an empty response"
+            throw new SalesEmptyResponseException("Tally returned an empty response"
             );
         }
 
@@ -241,9 +250,7 @@ public class TallyService {
         try {
             root = objectMapper.readTree(body);
         } catch (Exception e) {
-            throw new ResponseStatusException(
-                    HttpStatus.BAD_GATEWAY,
-                    "Tally returned an invalid response"
+            throw new SalesInvalidResponseException("Tally returned an invalid response"
             );
         }
 
@@ -252,11 +259,9 @@ public class TallyService {
                         .asText("");
 
         if (!"1".equals(status)) {
-            throw new ResponseStatusException(
-                    HttpStatus.BAD_GATEWAY,
-                    "Tally reported an error for company '"
-                            + companyName
-                            + "'"
+            throw new SalesTallyErrorException("Tally reported an error for company '"
+                    + companyName
+                    + "'"
             );
         }
 
@@ -271,15 +276,34 @@ public class TallyService {
             return vouchers;
         }
 
-        // This is only a safety canary. We deliberately do NOT
-        // filter the response in Java because that would reintroduce
-        // the fetch-everything-then-filter pattern.
+        // ---------------------------------------------------------
+        // SANITY CHECK - not a filter, just a canary.
+        //
+        // A request spanning at most MAX_DATE_RANGE_DAYS days
+        // should never realistically come back with tens of
+        // thousands of Sales vouchers. If it does, the Tally-side
+        // $Date filter is most likely not being applied anymore
+        // (e.g. a TallyAPIConnector update changed how "Filters" /
+        // "System : Formulae" is handled) and Tally is silently
+        // sending back far more than requested. We still map and
+        // return what came back rather than guessing at a
+        // Java-side re-filter - that would reintroduce exactly the
+        // "fetch everything, filter in Java" pattern we removed -
+        // but we log loudly so this gets caught before it becomes
+        // an OOM incident.
+        // ---------------------------------------------------------
+
         if (collection.size() > SUSPICIOUS_RESULT_SIZE) {
             log.warn(
-                    "Tally returned {} vouchers for date range {} to {} "
-                            + "for company {}. Verify the Tally-side date "
-                            + "filter is being applied.",
+                    "Tally returned {} vouchers for a {}-day range "
+                            + "(from={}, to={}, company={}). This is "
+                            + "far more than expected for a bounded "
+                            + "date-range request - verify the "
+                            + "Tally-side $Date filter (Filters / "
+                            + "System : Formulae) is still being "
+                            + "applied by TallyAPIConnector.",
                     collection.size(),
+                    requestedDays + 1,
                     from,
                     to,
                     companyName
@@ -303,24 +327,20 @@ public class TallyService {
     }
 
     // =========================================================
-    // BUILD DATE-RANGE TALLY REQUEST
+    // TALLY $$Date LITERAL FORMAT
     // =========================================================
-    // IMPORTANT:
-    // Reuses the existing TSPLAllSalesVouchers collection.
     //
-    // *** CORRECTION ***
-    // SVFROMDATE / SVTODATE are now sent as static variables so
-    // the request itself sets Tally's active period for this
-    // export, instead of relying on whatever period Tally
-    // currently has open (Gateway of Tally > F2: Period).
+    // Format for dates baked into the $$Date:"..." literal used
+    // in the System : Formulae filter below. This is the ONE
+    // date-filtering approach we have actual confirmed evidence
+    // for: TallyAPIConnectorV2.0's own "Pull all Sales vouchers
+    // for a period" reference example uses exactly this pattern
+    // against this same company's data (same voucher GUID
+    // a8899ded-06d2-489a-b2f0-2dbe67a4b9ba-0000003b) and returns
+    // only the matching voucher:
     //
-    // Without these, the Filter formula below can only narrow an
-    // ALREADY active period - it cannot widen it - so any range
-    // reaching past Tally's current active period silently
-    // returned an empty collection. That is why only ranges
-    // fully inside the current period (e.g. a single day, or a
-    // day already within that period) worked, and any wider
-    // range returned [].
+    //   $Date >= ($$Date:"02-04-2026") AND $Date <= ($$Date:"02-04-2026")
+    //
     // =========================================================
 
     private static final DateTimeFormatter TALLY_DATE_LITERAL_FORMAT =
@@ -329,11 +349,44 @@ public class TallyService {
                     java.util.Locale.ENGLISH
             );
 
-    private static final DateTimeFormatter TALLY_SV_DATE_FORMAT =
-            DateTimeFormatter.ofPattern(
-                    "yyyyMMdd",
-                    java.util.Locale.ENGLISH
-            );
+    // =========================================================
+    // BUILD DATE-RANGE TALLY REQUEST
+    // =========================================================
+    //
+    // IMPORTANT:
+    //
+    // The "Parm Var" version of this request (sourcing dates from
+    // ##SVFromDate/##SVToDate into a Date-typed local var) came
+    // back EMPTY against real data, even for a date that has a
+    // voucher. That means the filter WAS applied, but
+    // ##svfromdate/##svtodate resolved to nothing usable -
+    // most likely because "Parm Var" isn't implemented by this
+    // connector's dynamic JSON collection path the way it is in
+    // full native TDL (doc 2's Parm Var runs through the real TDL
+    // engine via a menu-loaded .txt file - a different execution
+    // path to this HTTP JSON export).
+    //
+    // We are reverting to literal $$Date:"dd-MM-yyyy" values baked
+    // directly into the formula text. This is the one approach we
+    // have actual confirmed proof for: TallyAPIConnectorV2.0's own
+    // reference example uses exactly this against this same
+    // company's data and returns the correct single voucher.
+    //
+    // The mechanism that keeps the result set small:
+    //
+    //   1. "Filters" on the collection, pointing at a
+    //      "System : Formulae" definition:
+    //
+    //          $Date >= ($$Date:"02-04-2026")
+    //              AND $Date <= ($$Date:"02-04-2026")
+    //
+    // Tally (via TallyAPIConnectorV2.0) evaluates this
+    // server-side while building the export, so only matching
+    // vouchers are ever sent back to this service - there is no
+    // "fetch everything, then filter" step here or in
+    // pullSalesVouchersByDateRange().
+    //
+    // =========================================================
 
     private TallyRequest buildSalesVouchersDateRangeRequest(
             String companyName,
@@ -347,12 +400,6 @@ public class TallyService {
         String toDateLiteral =
                 to.format(TALLY_DATE_LITERAL_FORMAT);
 
-        String svFromDate =
-                from.format(TALLY_SV_DATE_FORMAT);
-
-        String svToDate =
-                to.format(TALLY_SV_DATE_FORMAT);
-
         List<TallyRequest.StaticVariable> staticVariables =
                 List.of(
                         new TallyRequest.StaticVariable(
@@ -362,25 +409,15 @@ public class TallyService {
                         new TallyRequest.StaticVariable(
                                 "svCurrentCompany",
                                 companyName
-                        ),
-                        // *** CORRECTION - sets the active period for THIS export ***
-                        new TallyRequest.StaticVariable(
-                                "svFromDate",
-                                svFromDate
-                        ),
-                        new TallyRequest.StaticVariable(
-                                "svToDate",
-                                svToDate
                         )
                 );
 
-        // ---------------------------------------------------------
-        // COLLECTION
-        // ---------------------------------------------------------
-        // The important part is the Filter attribute (singular). The date
-        // range is evaluated by Tally before the JSON collection is
-        // returned to Java.
-        // ---------------------------------------------------------
+        // -----------------------------------------------------
+        // 1) COLLECTION DEFINITION
+        //    Same collection as buildAllSalesVouchersRequest,
+        //    plus a "Filters" attribute pointing at the date
+        //    range formula defined below.
+        // -----------------------------------------------------
 
         Map<String, Object> collectionMetadata =
                 Map.of(
@@ -390,7 +427,7 @@ public class TallyService {
                         "Collection"
                 );
 
-        List<Map<String, String>> collectionAttributes =
+        List<Map<String, String>> attributes =
                 List.of(
                         Map.of(
                                 "Type",
@@ -405,12 +442,12 @@ public class TallyService {
                                 "Yes"
                         ),
                         Map.of(
-                                "Filter",
+                                "Filters",
                                 "TSPLSalesDateRangeFilter"
                         ),
                         Map.of(
                                 "Fetch",
-                                "Date, VoucherTypeName, VoucherNumber, PartyLedgerName, Amount, GUID, MasterID"
+                                "Date, VoucherTypeName, VoucherNumber, PartyLedgerName, GUID, MasterID"
                         ),
                         Map.of(
                                 "Fetch",
@@ -421,21 +458,17 @@ public class TallyService {
         TallyRequest.Definition collectionDefinition =
                 TallyRequest.Definition.builder()
                         .metadata(collectionMetadata)
-                        .attributes(collectionAttributes)
+                        .attributes(attributes)
                         .build();
 
-        // ---------------------------------------------------------
-        // SYSTEM : FORMULAE
-        // ---------------------------------------------------------
-        // Do NOT use Parm Var here. Your real Tally test showed that
-        // the dynamic HTTP/JSON path can return an empty collection
-        // when the Parm Var values do not resolve.
-        //
-        // Instead the exact requested dates are placed directly into
-        // the Tally formula as $$Date literals. This is kept as a
-        // second, defensive filter on top of SVFROMDATE / SVTODATE
-        // above.
-        // ---------------------------------------------------------
+        // -----------------------------------------------------
+        // 2) SYSTEM : FORMULAE DEFINITION
+        //    Name MUST match the "Filters" value above exactly.
+        //    Dates are baked directly into the formula text as
+        //    $$Date literals - Tally evaluates this per-voucher
+        //    while building the export, before anything is sent
+        //    back over the wire.
+        // -----------------------------------------------------
 
         Map<String, Object> formulaMetadata =
                 Map.of(
@@ -446,7 +479,7 @@ public class TallyService {
                         "sys_type",
                         "Formulae",
                         "ismodify",
-                        "true"
+                        true
                 );
 
         String formulaValue =
@@ -1647,9 +1680,7 @@ public class TallyService {
         if (userId == null
                 || userId.isBlank()) {
 
-            throw new ResponseStatusException(
-                    HttpStatus.UNAUTHORIZED,
-                    "Authenticated user is required"
+            throw new UserNotAuthenticatedException("Authenticated user is required"
             );
         }
     }
@@ -1665,9 +1696,7 @@ public class TallyService {
         if (companyName == null
                 || companyName.isBlank()) {
 
-            throw new ResponseStatusException(
-                    HttpStatus.BAD_REQUEST,
-                    "Company name cannot be empty"
+            throw new SalesCompanyNameRequiredException("Company name cannot be empty"
             );
         }
     }
@@ -1825,41 +1854,26 @@ public class TallyService {
 
         } catch (Exception e) {
 
-            throw new ResponseStatusException(
-                    HttpStatus.INTERNAL_SERVER_ERROR,
-                    "Failed to build Tally request"
+            throw new SalesRequestPreparationException("Failed to build Tally request"
             );
         }
 
-        AgentRelayService.RelayResponse response;
-
-        try {
-
-            response =
-                    agentRelayService.relay(
-                            userId,
-                            "POST",
-                            headers,
-                            jsonBody
-                    );
-
-        } catch (ResponseStatusException e) {
-
-            throw e;
-
-        } catch (Exception e) {
-
-            throw new ResponseStatusException(
-                    HttpStatus.BAD_GATEWAY,
-                    "Unable to communicate with Tally Agent"
-            );
-        }
+        /*
+         * AgentRelayService already throws specific Agent*Exception
+         * types (offline, timeout, not found ...), so they are NOT
+         * caught here - they go straight to GlobalExceptionHandler.
+         */
+        AgentRelayService.RelayResponse response =
+                agentRelayService.relay(
+                        userId,
+                        "POST",
+                        headers,
+                        jsonBody
+                );
 
         if (response == null) {
 
-            throw new ResponseStatusException(
-                    HttpStatus.BAD_GATEWAY,
-                    "Tally Agent returned no response"
+            throw new SalesEmptyResponseException("Tally Agent returned no response"
             );
         }
 
@@ -1872,9 +1886,7 @@ public class TallyService {
         if (status < 200
                 || status >= 300) {
 
-            throw new ResponseStatusException(
-                    HttpStatus.BAD_GATEWAY,
-                    "Tally Agent returned an unsuccessful response"
+            throw new SalesAgentStatusException("Tally Agent returned an unsuccessful response"
             );
         }
 

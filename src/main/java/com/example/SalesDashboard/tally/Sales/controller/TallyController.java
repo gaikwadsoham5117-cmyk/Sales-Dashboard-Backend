@@ -2,6 +2,7 @@ package com.example.SalesDashboard.tally.Sales.controller;
 
 import com.example.SalesDashboard.framework.security.JwtAuthenticationFilter;
 import com.example.SalesDashboard.tally.Sales.dto.SalesVoucherDTO;
+import com.example.SalesDashboard.tally.Sales.exception.InvalidSalesDateRangeException;
 import com.example.SalesDashboard.tally.Sales.service.TallyService;
 import com.example.SalesDashboard.user.exception.UserNotAuthenticatedException;
 import io.swagger.v3.oas.annotations.Operation;
@@ -9,11 +10,9 @@ import io.swagger.v3.oas.annotations.Parameter;
 import io.swagger.v3.oas.annotations.tags.Tag;
 import lombok.RequiredArgsConstructor;
 import org.springframework.format.annotation.DateTimeFormat;
-import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.security.core.Authentication;
 import org.springframework.web.bind.annotation.*;
-import org.springframework.web.server.ResponseStatusException;
 
 import java.time.LocalDate;
 import java.util.List;
@@ -25,6 +24,19 @@ import java.util.List;
 public class TallyController {
 
     private final TallyService tallyService;
+    // =========================================================
+    // COMPANY-WISE SALES VOUCHERS
+    // =========================================================
+    //
+    // GET:
+    // /api/tally/{companyName}/sales-vouchers
+    //
+    // No agentId required.
+    //
+    // Backend automatically identifies the authenticated user,
+    // organization and connected Tally Agent.
+    //
+    // =========================================================
 
     @Operation(
 
@@ -121,8 +133,7 @@ public class TallyController {
 
         // Validate date range.
         if (from.isAfter(to)) {
-            throw new ResponseStatusException(
-                    HttpStatus.BAD_REQUEST,
+            throw new InvalidSalesDateRangeException(
                     "'from' date cannot be after 'to' date"
             );
         }
