@@ -6,6 +6,7 @@ import com.example.SalesDashboard.framework.exception.EmailNotFoundException;
 import com.example.SalesDashboard.organization.exception.*;
 import com.example.SalesDashboard.subscription.exception.*;
 import com.example.SalesDashboard.tally.Company.exception.*;
+import com.example.SalesDashboard.tally.Sales.exception.*;
 import com.example.SalesDashboard.user.exception.InactiveAccountException;
 import com.example.SalesDashboard.user.exception.InvalidCredentialsException;
 import com.example.SalesDashboard.user.exception.InvalidFormatPasswordException;
@@ -18,6 +19,8 @@ import org.springframework.http.HttpStatusCode;
 import org.springframework.http.ResponseEntity;
 import org.springframework.validation.FieldError;
 import org.springframework.web.bind.MethodArgumentNotValidException;
+import org.springframework.web.bind.MissingServletRequestParameterException;
+import org.springframework.web.method.annotation.MethodArgumentTypeMismatchException;
 import org.springframework.web.bind.annotation.ControllerAdvice;
 import org.springframework.web.bind.annotation.ExceptionHandler;
 import org.springframework.web.server.ResponseStatusException;
@@ -43,6 +46,45 @@ public class GlobalExceptionHandler {
         log.warn("Validation failed: {}", errors);
         return ResponseEntity.status(HttpStatus.BAD_REQUEST)
                 .body(new ErrorResponse(HttpStatus.BAD_REQUEST.value(), "Validation failed", errors));
+    }
+
+    // =========================================================
+    // BAD REQUEST PARAMETERS
+    //
+    // A query param / path variable value that cannot be
+    // converted to the type the controller expects.
+    //
+    // e.g. ?to=2026-04-3 cannot become a LocalDate (needs
+    // yyyy-MM-dd, so 2026-04-03), or ?page=abc cannot become
+    // an int. This happens BEFORE the controller method runs,
+    // so it never reaches any of our own validation code.
+    // =========================================================
+
+    @ExceptionHandler(MethodArgumentTypeMismatchException.class)
+    public ResponseEntity<ErrorResponse> handleMethodArgumentTypeMismatchException(MethodArgumentTypeMismatchException ex) {
+        String requiredType = ex.getRequiredType() != null
+                ? ex.getRequiredType().getSimpleName()
+                : "the expected type";
+        String message = "Invalid value for '" + ex.getName() + "': '"
+                + ex.getValue() + "'. Expected " + requiredType
+                + (requiredType.equals("LocalDate") ? " in yyyy-MM-dd format" : "") + ".";
+        log.warn("Bad request parameter: {}", message);
+        ErrorResponse errorResponse = new ErrorResponse(HttpStatus.BAD_REQUEST.value(), message);
+        return ResponseEntity.status(HttpStatus.BAD_REQUEST).body(errorResponse);
+    }
+
+    // =========================================================
+    // MISSING REQUIRED PARAMETER
+    //
+    // A required @RequestParam that was not sent at all.
+    // =========================================================
+
+    @ExceptionHandler(MissingServletRequestParameterException.class)
+    public ResponseEntity<ErrorResponse> handleMissingServletRequestParameterException(MissingServletRequestParameterException ex) {
+        String message = "Required parameter '" + ex.getParameterName() + "' is missing.";
+        log.warn("Missing request parameter: {}", message);
+        ErrorResponse errorResponse = new ErrorResponse(HttpStatus.BAD_REQUEST.value(), message);
+        return ResponseEntity.status(HttpStatus.BAD_REQUEST).body(errorResponse);
     }
 
     // =========================================================
@@ -240,6 +282,73 @@ public class GlobalExceptionHandler {
     @ExceptionHandler(CompanyResponseParseException.class)
     public ResponseEntity<ErrorResponse> handleCompanyResponseParseException(CompanyResponseParseException ex) {
         log.warn("Tally company response could not be parsed: {}", ex.getMessage());
+        ErrorResponse errorResponse = new ErrorResponse(HttpStatus.BAD_GATEWAY.value(), ex.getMessage());
+        return ResponseEntity.status(HttpStatus.BAD_GATEWAY).body(errorResponse);
+    }
+
+    // =========================================================
+    // TALLY SALES
+    // =========================================================
+
+    @ExceptionHandler(SalesCompanyNameRequiredException.class)
+    public ResponseEntity<ErrorResponse> handleSalesCompanyNameRequiredException(SalesCompanyNameRequiredException ex) {
+        log.warn("Sales company name missing: {}", ex.getMessage());
+        ErrorResponse errorResponse = new ErrorResponse(HttpStatus.BAD_REQUEST.value(), ex.getMessage());
+        return ResponseEntity.status(HttpStatus.BAD_REQUEST).body(errorResponse);
+    }
+
+    @ExceptionHandler(SalesDateRangeRequiredException.class)
+    public ResponseEntity<ErrorResponse> handleSalesDateRangeRequiredException(SalesDateRangeRequiredException ex) {
+        log.warn("Sales date range missing: {}", ex.getMessage());
+        ErrorResponse errorResponse = new ErrorResponse(HttpStatus.BAD_REQUEST.value(), ex.getMessage());
+        return ResponseEntity.status(HttpStatus.BAD_REQUEST).body(errorResponse);
+    }
+
+    @ExceptionHandler(InvalidSalesDateRangeException.class)
+    public ResponseEntity<ErrorResponse> handleInvalidSalesDateRangeException(InvalidSalesDateRangeException ex) {
+        log.warn("Invalid sales date range: {}", ex.getMessage());
+        ErrorResponse errorResponse = new ErrorResponse(HttpStatus.BAD_REQUEST.value(), ex.getMessage());
+        return ResponseEntity.status(HttpStatus.BAD_REQUEST).body(errorResponse);
+    }
+
+    @ExceptionHandler(SalesDateRangeTooLargeException.class)
+    public ResponseEntity<ErrorResponse> handleSalesDateRangeTooLargeException(SalesDateRangeTooLargeException ex) {
+        log.warn("Sales date range too large: {}", ex.getMessage());
+        ErrorResponse errorResponse = new ErrorResponse(HttpStatus.BAD_REQUEST.value(), ex.getMessage());
+        return ResponseEntity.status(HttpStatus.BAD_REQUEST).body(errorResponse);
+    }
+
+    @ExceptionHandler(SalesRequestPreparationException.class)
+    public ResponseEntity<ErrorResponse> handleSalesRequestPreparationException(SalesRequestPreparationException ex) {
+        log.warn("Tally sales request preparation failed: {}", ex.getMessage());
+        ErrorResponse errorResponse = new ErrorResponse(HttpStatus.INTERNAL_SERVER_ERROR.value(), ex.getMessage());
+        return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR).body(errorResponse);
+    }
+
+    @ExceptionHandler(SalesEmptyResponseException.class)
+    public ResponseEntity<ErrorResponse> handleSalesEmptyResponseException(SalesEmptyResponseException ex) {
+        log.warn("Empty Tally sales response: {}", ex.getMessage());
+        ErrorResponse errorResponse = new ErrorResponse(HttpStatus.BAD_GATEWAY.value(), ex.getMessage());
+        return ResponseEntity.status(HttpStatus.BAD_GATEWAY).body(errorResponse);
+    }
+
+    @ExceptionHandler(SalesInvalidResponseException.class)
+    public ResponseEntity<ErrorResponse> handleSalesInvalidResponseException(SalesInvalidResponseException ex) {
+        log.warn("Invalid Tally sales response: {}", ex.getMessage());
+        ErrorResponse errorResponse = new ErrorResponse(HttpStatus.BAD_GATEWAY.value(), ex.getMessage());
+        return ResponseEntity.status(HttpStatus.BAD_GATEWAY).body(errorResponse);
+    }
+
+    @ExceptionHandler(SalesTallyErrorException.class)
+    public ResponseEntity<ErrorResponse> handleSalesTallyErrorException(SalesTallyErrorException ex) {
+        log.warn("Tally reported a sales error: {}", ex.getMessage());
+        ErrorResponse errorResponse = new ErrorResponse(HttpStatus.BAD_GATEWAY.value(), ex.getMessage());
+        return ResponseEntity.status(HttpStatus.BAD_GATEWAY).body(errorResponse);
+    }
+
+    @ExceptionHandler(SalesAgentStatusException.class)
+    public ResponseEntity<ErrorResponse> handleSalesAgentStatusException(SalesAgentStatusException ex) {
+        log.warn("Tally Agent returned failure status: {}", ex.getMessage());
         ErrorResponse errorResponse = new ErrorResponse(HttpStatus.BAD_GATEWAY.value(), ex.getMessage());
         return ResponseEntity.status(HttpStatus.BAD_GATEWAY).body(errorResponse);
     }
