@@ -7,11 +7,7 @@ import com.example.SalesDashboard.organization.exception.*;
 import com.example.SalesDashboard.subscription.exception.*;
 import com.example.SalesDashboard.tally.Company.exception.*;
 import com.example.SalesDashboard.tally.Sales.exception.*;
-import com.example.SalesDashboard.user.exception.InactiveAccountException;
-import com.example.SalesDashboard.user.exception.InvalidCredentialsException;
-import com.example.SalesDashboard.user.exception.InvalidFormatPasswordException;
-import com.example.SalesDashboard.user.exception.UserAlreadyExistException;
-import com.example.SalesDashboard.user.exception.UserNotAuthenticatedException;
+import com.example.SalesDashboard.user.exception.*;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.http.HttpStatus;
@@ -94,6 +90,174 @@ public class GlobalExceptionHandler {
     @ExceptionHandler(UserAlreadyExistException.class)
     public ResponseEntity<ErrorResponse> handleUserAlreadyExistException(UserAlreadyExistException ex) {
         log.warn("User registration failed: {}", ex.getMessage());
+        ErrorResponse errorResponse = new ErrorResponse(HttpStatus.BAD_REQUEST.value(), ex.getMessage());
+        return ResponseEntity.status(HttpStatus.BAD_REQUEST).body(errorResponse);
+    }
+
+    @ExceptionHandler(UserEmailRequiredException.class)
+    public ResponseEntity<ErrorResponse> handleUserEmailRequiredException(UserEmailRequiredException ex) {
+        log.warn("Email missing: {}", ex.getMessage());
+        ErrorResponse errorResponse = new ErrorResponse(HttpStatus.BAD_REQUEST.value(), ex.getMessage());
+        return ResponseEntity.status(HttpStatus.BAD_REQUEST).body(errorResponse);
+    }
+
+    @ExceptionHandler(EmailAlreadyInUseException.class)
+    public ResponseEntity<ErrorResponse> handleEmailAlreadyInUseException(EmailAlreadyInUseException ex) {
+        log.warn("Email already in use: {}", ex.getMessage());
+        ErrorResponse errorResponse = new ErrorResponse(HttpStatus.CONFLICT.value(), ex.getMessage());
+        return ResponseEntity.status(HttpStatus.CONFLICT).body(errorResponse);
+    }
+
+    @ExceptionHandler(OrganizationIdRequiredException.class)
+    public ResponseEntity<ErrorResponse> handleOrganizationIdRequiredException(OrganizationIdRequiredException ex) {
+        log.warn("Organization id missing: {}", ex.getMessage());
+        ErrorResponse errorResponse = new ErrorResponse(HttpStatus.BAD_REQUEST.value(), ex.getMessage());
+        return ResponseEntity.status(HttpStatus.BAD_REQUEST).body(errorResponse);
+    }
+
+    @ExceptionHandler(UserNotFoundException.class)
+    public ResponseEntity<ErrorResponse> handleUserNotFoundException(UserNotFoundException ex) {
+        log.warn("User not found: {}", ex.getMessage());
+        ErrorResponse errorResponse = new ErrorResponse(HttpStatus.NOT_FOUND.value(), ex.getMessage());
+        return ResponseEntity.status(HttpStatus.NOT_FOUND).body(errorResponse);
+    }
+
+    @ExceptionHandler(NoValidFieldsProvidedException.class)
+    public ResponseEntity<ErrorResponse> handleNoValidFieldsProvidedException(NoValidFieldsProvidedException ex) {
+        log.warn("No valid fields provided: {}", ex.getMessage());
+        ErrorResponse errorResponse = new ErrorResponse(HttpStatus.BAD_REQUEST.value(), ex.getMessage());
+        return ResponseEntity.status(HttpStatus.BAD_REQUEST).body(errorResponse);
+    }
+
+    @ExceptionHandler(InvalidUserRoleException.class)
+    public ResponseEntity<ErrorResponse> handleInvalidUserRoleException(InvalidUserRoleException ex) {
+        log.warn("Invalid user role: {}", ex.getMessage());
+        ErrorResponse errorResponse = new ErrorResponse(HttpStatus.BAD_REQUEST.value(), ex.getMessage());
+        return ResponseEntity.status(HttpStatus.BAD_REQUEST).body(errorResponse);
+    }
+
+    @ExceptionHandler(InvalidUserStatusException.class)
+    public ResponseEntity<ErrorResponse> handleInvalidUserStatusException(InvalidUserStatusException ex) {
+        log.warn("Invalid user status: {}", ex.getMessage());
+        ErrorResponse errorResponse = new ErrorResponse(HttpStatus.BAD_REQUEST.value(), ex.getMessage());
+        return ResponseEntity.status(HttpStatus.BAD_REQUEST).body(errorResponse);
+    }
+
+    @ExceptionHandler(InvalidEnabledValueException.class)
+    public ResponseEntity<ErrorResponse> handleInvalidEnabledValueException(InvalidEnabledValueException ex) {
+        log.warn("Invalid enabled value: {}", ex.getMessage());
+        ErrorResponse errorResponse = new ErrorResponse(HttpStatus.BAD_REQUEST.value(), ex.getMessage());
+        return ResponseEntity.status(HttpStatus.BAD_REQUEST).body(errorResponse);
+    }
+
+    @ExceptionHandler(InvalidUpdateFieldException.class)
+    public ResponseEntity<ErrorResponse> handleInvalidUpdateFieldException(InvalidUpdateFieldException ex) {
+        log.warn("Invalid update field: {}", ex.getMessage());
+        ErrorResponse errorResponse = new ErrorResponse(HttpStatus.BAD_REQUEST.value(), ex.getMessage());
+        return ResponseEntity.status(HttpStatus.BAD_REQUEST).body(errorResponse);
+    }
+
+    @ExceptionHandler(OwnerOrganizationNotAssignedException.class)
+    public ResponseEntity<ErrorResponse> handleOwnerOrganizationNotAssignedException(OwnerOrganizationNotAssignedException ex) {
+        log.warn("Owner has no organization: {}", ex.getMessage());
+        ErrorResponse errorResponse = new ErrorResponse(HttpStatus.BAD_REQUEST.value(), ex.getMessage());
+        return ResponseEntity.status(HttpStatus.BAD_REQUEST).body(errorResponse);
+    }
+
+    @ExceptionHandler(SubscriptionNotConfiguredException.class)
+    public ResponseEntity<ErrorResponse> handleSubscriptionNotConfiguredException(SubscriptionNotConfiguredException ex) {
+        log.warn("Subscription not configured: {}", ex.getMessage());
+        ErrorResponse errorResponse = new ErrorResponse(HttpStatus.FORBIDDEN.value(), ex.getMessage());
+        return ResponseEntity.status(HttpStatus.FORBIDDEN).body(errorResponse);
+    }
+
+    @ExceptionHandler(SubscriptionInactiveException.class)
+    public ResponseEntity<ErrorResponse> handleSubscriptionInactiveException(SubscriptionInactiveException ex) {
+        log.warn("Subscription inactive: {}", ex.getMessage());
+        ErrorResponse errorResponse = new ErrorResponse(HttpStatus.FORBIDDEN.value(), ex.getMessage());
+        return ResponseEntity.status(HttpStatus.FORBIDDEN).body(errorResponse);
+    }
+
+    @ExceptionHandler(SubscriptionNotAssignedException.class)
+    public ResponseEntity<ErrorResponse> handleSubscriptionNotAssignedException(SubscriptionNotAssignedException ex) {
+        log.warn("Subscription not assigned: {}", ex.getMessage());
+        ErrorResponse errorResponse = new ErrorResponse(HttpStatus.FORBIDDEN.value(), ex.getMessage());
+        return ResponseEntity.status(HttpStatus.FORBIDDEN).body(errorResponse);
+    }
+
+    @ExceptionHandler(InvalidUserLimitConfiguredException.class)
+    public ResponseEntity<ErrorResponse> handleInvalidUserLimitConfiguredException(InvalidUserLimitConfiguredException ex) {
+        log.warn("Invalid user limit configured: {}", ex.getMessage());
+        ErrorResponse errorResponse = new ErrorResponse(HttpStatus.FORBIDDEN.value(), ex.getMessage());
+        return ResponseEntity.status(HttpStatus.FORBIDDEN).body(errorResponse);
+    }
+
+    @ExceptionHandler(UserLimitReachedException.class)
+    public ResponseEntity<ErrorResponse> handleUserLimitReachedException(UserLimitReachedException ex) {
+        log.warn("User limit reached: {}", ex.getMessage());
+        ErrorResponse errorResponse = new ErrorResponse(HttpStatus.FORBIDDEN.value(), ex.getMessage());
+        return ResponseEntity.status(HttpStatus.FORBIDDEN).body(errorResponse);
+    }
+
+    @ExceptionHandler(OwnerNotFoundException.class)
+    public ResponseEntity<ErrorResponse> handleOwnerNotFoundException(OwnerNotFoundException ex) {
+        log.warn("Owner not found: {}", ex.getMessage());
+        ErrorResponse errorResponse = new ErrorResponse(HttpStatus.NOT_FOUND.value(), ex.getMessage());
+        return ResponseEntity.status(HttpStatus.NOT_FOUND).body(errorResponse);
+    }
+
+    @ExceptionHandler(NotAnOwnerException.class)
+    public ResponseEntity<ErrorResponse> handleNotAnOwnerException(NotAnOwnerException ex) {
+        log.warn("Not an owner: {}", ex.getMessage());
+        ErrorResponse errorResponse = new ErrorResponse(HttpStatus.FORBIDDEN.value(), ex.getMessage());
+        return ResponseEntity.status(HttpStatus.FORBIDDEN).body(errorResponse);
+    }
+
+    @ExceptionHandler(OwnerAccountDisabledException.class)
+    public ResponseEntity<ErrorResponse> handleOwnerAccountDisabledException(OwnerAccountDisabledException ex) {
+        log.warn("Owner account disabled: {}", ex.getMessage());
+        ErrorResponse errorResponse = new ErrorResponse(HttpStatus.FORBIDDEN.value(), ex.getMessage());
+        return ResponseEntity.status(HttpStatus.FORBIDDEN).body(errorResponse);
+    }
+
+    @ExceptionHandler(OwnerAccountInactiveException.class)
+    public ResponseEntity<ErrorResponse> handleOwnerAccountInactiveException(OwnerAccountInactiveException ex) {
+        log.warn("Owner account inactive: {}", ex.getMessage());
+        ErrorResponse errorResponse = new ErrorResponse(HttpStatus.FORBIDDEN.value(), ex.getMessage());
+        return ResponseEntity.status(HttpStatus.FORBIDDEN).body(errorResponse);
+    }
+
+    @ExceptionHandler(EmployeeNotFoundException.class)
+    public ResponseEntity<ErrorResponse> handleEmployeeNotFoundException(EmployeeNotFoundException ex) {
+        log.warn("Employee not found: {}", ex.getMessage());
+        ErrorResponse errorResponse = new ErrorResponse(HttpStatus.NOT_FOUND.value(), ex.getMessage());
+        return ResponseEntity.status(HttpStatus.NOT_FOUND).body(errorResponse);
+    }
+
+    @ExceptionHandler(NotAnEmployeeException.class)
+    public ResponseEntity<ErrorResponse> handleNotAnEmployeeException(NotAnEmployeeException ex) {
+        log.warn("Not an employee: {}", ex.getMessage());
+        ErrorResponse errorResponse = new ErrorResponse(HttpStatus.BAD_REQUEST.value(), ex.getMessage());
+        return ResponseEntity.status(HttpStatus.BAD_REQUEST).body(errorResponse);
+    }
+
+    @ExceptionHandler(EmployeeOrganizationMismatchException.class)
+    public ResponseEntity<ErrorResponse> handleEmployeeOrganizationMismatchException(EmployeeOrganizationMismatchException ex) {
+        log.warn("Employee organization mismatch: {}", ex.getMessage());
+        ErrorResponse errorResponse = new ErrorResponse(HttpStatus.FORBIDDEN.value(), ex.getMessage());
+        return ResponseEntity.status(HttpStatus.FORBIDDEN).body(errorResponse);
+    }
+
+    @ExceptionHandler(InvalidResetCodeException.class)
+    public ResponseEntity<ErrorResponse> handleInvalidResetCodeException(InvalidResetCodeException ex) {
+        log.warn("Invalid reset code: {}", ex.getMessage());
+        ErrorResponse errorResponse = new ErrorResponse(HttpStatus.UNAUTHORIZED.value(), ex.getMessage());
+        return ResponseEntity.status(HttpStatus.UNAUTHORIZED).body(errorResponse);
+    }
+
+    @ExceptionHandler(PasswordMismatchException.class)
+    public ResponseEntity<ErrorResponse> handlePasswordMismatchException(PasswordMismatchException ex) {
+        log.warn("Password mismatch: {}", ex.getMessage());
         ErrorResponse errorResponse = new ErrorResponse(HttpStatus.BAD_REQUEST.value(), ex.getMessage());
         return ResponseEntity.status(HttpStatus.BAD_REQUEST).body(errorResponse);
     }

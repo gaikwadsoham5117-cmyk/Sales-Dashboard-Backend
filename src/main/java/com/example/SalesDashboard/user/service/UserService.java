@@ -19,6 +19,37 @@ import com.example.SalesDashboard.user.entity.User;
 import com.example.SalesDashboard.user.entity.UserStatus;
 
 import com.example.SalesDashboard.user.exception.InvalidFormatPasswordException;
+import com.example.SalesDashboard.framework.exception.EmailNotFoundException;
+
+import com.example.SalesDashboard.organization.exception.OrganizationNotFoundException;
+
+import com.example.SalesDashboard.subscription.exception.SubscriptionNotFoundException;
+
+import com.example.SalesDashboard.user.exception.EmailAlreadyInUseException;
+import com.example.SalesDashboard.user.exception.EmployeeNotFoundException;
+import com.example.SalesDashboard.user.exception.EmployeeOrganizationMismatchException;
+import com.example.SalesDashboard.user.exception.InvalidEnabledValueException;
+import com.example.SalesDashboard.user.exception.InvalidResetCodeException;
+import com.example.SalesDashboard.user.exception.InvalidUpdateFieldException;
+import com.example.SalesDashboard.user.exception.InvalidUserLimitConfiguredException;
+import com.example.SalesDashboard.user.exception.InvalidUserRoleException;
+import com.example.SalesDashboard.user.exception.InvalidUserStatusException;
+import com.example.SalesDashboard.user.exception.NoValidFieldsProvidedException;
+import com.example.SalesDashboard.user.exception.NotAnEmployeeException;
+import com.example.SalesDashboard.user.exception.NotAnOwnerException;
+import com.example.SalesDashboard.user.exception.OrganizationIdRequiredException;
+import com.example.SalesDashboard.user.exception.OwnerAccountDisabledException;
+import com.example.SalesDashboard.user.exception.OwnerAccountInactiveException;
+import com.example.SalesDashboard.user.exception.OwnerNotFoundException;
+import com.example.SalesDashboard.user.exception.OwnerOrganizationNotAssignedException;
+import com.example.SalesDashboard.user.exception.PasswordMismatchException;
+import com.example.SalesDashboard.user.exception.SubscriptionInactiveException;
+import com.example.SalesDashboard.user.exception.SubscriptionNotAssignedException;
+import com.example.SalesDashboard.user.exception.SubscriptionNotConfiguredException;
+import com.example.SalesDashboard.user.exception.UserEmailRequiredException;
+import com.example.SalesDashboard.user.exception.UserLimitReachedException;
+import com.example.SalesDashboard.user.exception.UserNotFoundException;
+
 import com.example.SalesDashboard.user.exception.UserAlreadyExistException;
 import com.example.SalesDashboard.user.repository.UserRepository;
 
@@ -27,12 +58,10 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 
 import lombok.RequiredArgsConstructor;
 
-import org.springframework.http.HttpStatus;
 import org.springframework.mail.SimpleMailMessage;
 import org.springframework.mail.javamail.JavaMailSender;
 import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.stereotype.Service;
-import org.springframework.web.server.ResponseStatusException;
 
 import java.util.Date;
 import java.util.List;
@@ -177,8 +206,7 @@ public class UserService {
         if (request.getEmail() == null
                 || request.getEmail().isBlank()) {
 
-            throw new ResponseStatusException(
-                    HttpStatus.BAD_REQUEST,
+            throw new UserEmailRequiredException(
                     "Email is required"
             );
         }
@@ -187,8 +215,7 @@ public class UserService {
                 request.getEmail()
         )) {
 
-            throw new ResponseStatusException(
-                    HttpStatus.CONFLICT,
+            throw new EmailAlreadyInUseException(
                     "Email already in use: "
                             + request.getEmail()
             );
@@ -197,8 +224,7 @@ public class UserService {
         if (request.getPassword() == null
                 || request.getPassword().length() < 6) {
 
-            throw new ResponseStatusException(
-                    HttpStatus.BAD_REQUEST,
+            throw new InvalidFormatPasswordException(
                     "Password must be at least 6 characters long"
             );
         }
@@ -206,8 +232,7 @@ public class UserService {
         if (request.getOrganizationId() == null
                 || request.getOrganizationId().isBlank()) {
 
-            throw new ResponseStatusException(
-                    HttpStatus.BAD_REQUEST,
+            throw new OrganizationIdRequiredException(
                     "Organization ID is required"
             );
         }
@@ -216,8 +241,7 @@ public class UserService {
                 organizationRepository.findById(
                         request.getOrganizationId()
                 ).orElseThrow(() ->
-                        new ResponseStatusException(
-                                HttpStatus.NOT_FOUND,
+                        new OrganizationNotFoundException(
                                 "Organization not found"
                         )
                 );
@@ -327,8 +351,7 @@ public class UserService {
         User user =
                 userRepository.findById(id)
                         .orElseThrow(() ->
-                                new ResponseStatusException(
-                                        HttpStatus.NOT_FOUND,
+                                new UserNotFoundException(
                                         "User not found"
                                 )
                         );
@@ -348,8 +371,7 @@ public class UserService {
 
         if (updates.isEmpty()) {
 
-            throw new ResponseStatusException(
-                    HttpStatus.BAD_REQUEST,
+            throw new NoValidFieldsProvidedException(
                     "No valid fields provided for update"
             );
         }
@@ -396,8 +418,7 @@ public class UserService {
 
                     } catch (IllegalArgumentException e) {
 
-                        throw new ResponseStatusException(
-                                HttpStatus.BAD_REQUEST,
+                        throw new InvalidUserRoleException(
                                 "Invalid role value"
                         );
                     }
@@ -434,8 +455,7 @@ public class UserService {
                             IllegalArgumentException e
                     ) {
 
-                        throw new ResponseStatusException(
-                                HttpStatus.BAD_REQUEST,
+                        throw new InvalidUserStatusException(
                                 "Invalid user status"
                         );
                     }
@@ -455,16 +475,14 @@ public class UserService {
 
                     } else {
 
-                        throw new ResponseStatusException(
-                                HttpStatus.BAD_REQUEST,
+                        throw new InvalidEnabledValueException(
                                 "Enabled must be true or false"
                         );
                     }
                 }
 
                 default ->
-                        throw new ResponseStatusException(
-                                HttpStatus.BAD_REQUEST,
+                        throw new InvalidUpdateFieldException(
                                 "Invalid field: " + key
                         );
             }
@@ -499,8 +517,7 @@ public class UserService {
         if (organizationId == null
                 || organizationId.isBlank()) {
 
-            throw new ResponseStatusException(
-                    HttpStatus.BAD_REQUEST,
+            throw new OwnerOrganizationNotAssignedException(
                     "Owner is not associated with an organization"
             );
         }
@@ -509,8 +526,7 @@ public class UserService {
                 organizationRepository.findById(
                         organizationId
                 ).orElseThrow(() ->
-                        new ResponseStatusException(
-                                HttpStatus.NOT_FOUND,
+                        new OrganizationNotFoundException(
                                 "Organization not found"
                         )
                 );
@@ -524,8 +540,7 @@ public class UserService {
 
         if (subscriptionStatus == null) {
 
-            throw new ResponseStatusException(
-                    HttpStatus.FORBIDDEN,
+            throw new SubscriptionNotConfiguredException(
                     "Organization subscription status is not configured"
             );
         }
@@ -533,8 +548,7 @@ public class UserService {
         if (subscriptionStatus
                 == SubscriptionStatus.UNPAID) {
 
-            throw new ResponseStatusException(
-                    HttpStatus.FORBIDDEN,
+            throw new SubscriptionInactiveException(
                     "Your subscription is inactive or expired"
             );
         }
@@ -546,8 +560,7 @@ public class UserService {
         if (organization.getSubscriptionId() == null
                 || organization.getSubscriptionId().isBlank()) {
 
-            throw new ResponseStatusException(
-                    HttpStatus.FORBIDDEN,
+            throw new SubscriptionNotAssignedException(
                     "No subscription is assigned to this organization"
             );
         }
@@ -556,8 +569,7 @@ public class UserService {
                 subscriptionRepository.findById(
                         organization.getSubscriptionId()
                 ).orElseThrow(() ->
-                        new ResponseStatusException(
-                                HttpStatus.NOT_FOUND,
+                        new SubscriptionNotFoundException(
                                 "Subscription not found"
                         )
                 );
@@ -565,8 +577,7 @@ public class UserService {
         if (subscription.getMaxUsers() == null
                 || subscription.getMaxUsers() <= 0) {
 
-            throw new ResponseStatusException(
-                    HttpStatus.FORBIDDEN,
+            throw new InvalidUserLimitConfiguredException(
                     "Invalid user limit configured"
             );
         }
@@ -579,8 +590,7 @@ public class UserService {
         if (currentUsers
                 >= subscription.getMaxUsers()) {
 
-            throw new ResponseStatusException(
-                    HttpStatus.FORBIDDEN,
+            throw new UserLimitReachedException(
                     "User limit reached. Maximum allowed users: "
                             + subscription.getMaxUsers()
             );
@@ -594,8 +604,7 @@ public class UserService {
                 request.getEmail()
         )) {
 
-            throw new ResponseStatusException(
-                    HttpStatus.CONFLICT,
+            throw new EmailAlreadyInUseException(
                     "Email already in use: "
                             + request.getEmail()
             );
@@ -608,8 +617,7 @@ public class UserService {
         if (request.getPassword() == null
                 || request.getPassword().length() < 6) {
 
-            throw new ResponseStatusException(
-                    HttpStatus.BAD_REQUEST,
+            throw new InvalidFormatPasswordException(
                     "Password must be at least 6 characters long"
             );
         }
@@ -712,8 +720,7 @@ public class UserService {
 
         if (enabled == null) {
 
-            throw new ResponseStatusException(
-                    HttpStatus.BAD_REQUEST,
+            throw new InvalidEnabledValueException(
                     "Enabled must be true or false"
             );
         }
@@ -801,8 +808,7 @@ public class UserService {
                 userRepository.findById(
                         ownerUserId
                 ).orElseThrow(() ->
-                        new ResponseStatusException(
-                                HttpStatus.NOT_FOUND,
+                        new OwnerNotFoundException(
                                 "Owner not found"
                         )
                 );
@@ -810,8 +816,7 @@ public class UserService {
         if (owner.getRoles()
                 != UserRoles.OWNER) {
 
-            throw new ResponseStatusException(
-                    HttpStatus.FORBIDDEN,
+            throw new NotAnOwnerException(
                     "Only an Owner can perform this action"
             );
         }
@@ -819,8 +824,7 @@ public class UserService {
         if (owner.getEnabled() == null
                 || !owner.getEnabled()) {
 
-            throw new ResponseStatusException(
-                    HttpStatus.FORBIDDEN,
+            throw new OwnerAccountDisabledException(
                     "Owner account is disabled"
             );
         }
@@ -828,8 +832,7 @@ public class UserService {
         if (owner.getStatus()
                 == UserStatus.INACTIVE) {
 
-            throw new ResponseStatusException(
-                    HttpStatus.FORBIDDEN,
+            throw new OwnerAccountInactiveException(
                     "Owner account is inactive"
             );
         }
@@ -851,8 +854,7 @@ public class UserService {
                 userRepository.findById(
                         employeeId
                 ).orElseThrow(() ->
-                        new ResponseStatusException(
-                                HttpStatus.NOT_FOUND,
+                        new EmployeeNotFoundException(
                                 "Employee not found"
                         )
                 );
@@ -860,8 +862,7 @@ public class UserService {
         if (employee.getRoles()
                 != UserRoles.EMPLOYEE) {
 
-            throw new ResponseStatusException(
-                    HttpStatus.BAD_REQUEST,
+            throw new NotAnEmployeeException(
                     "Selected user is not an employee"
             );
         }
@@ -870,8 +871,7 @@ public class UserService {
                 || !employee.getOrganizationId()
                 .equals(owner.getOrganizationId())) {
 
-            throw new ResponseStatusException(
-                    HttpStatus.FORBIDDEN,
+            throw new EmployeeOrganizationMismatchException(
                     "You cannot modify an employee from another organization"
             );
         }
@@ -940,8 +940,7 @@ public class UserService {
                 userRepository.findByEmail(
                         email
                 ).orElseThrow(() ->
-                        new ResponseStatusException(
-                                HttpStatus.NOT_FOUND,
+                        new EmailNotFoundException(
                                 "No user found with this email"
                         )
                 );
@@ -1004,8 +1003,7 @@ public class UserService {
                 userRepository.findByEmail(
                         request.getEmail()
                 ).orElseThrow(() ->
-                        new ResponseStatusException(
-                                HttpStatus.NOT_FOUND,
+                        new EmailNotFoundException(
                                 "No user found with this email"
                         )
                 );
@@ -1015,8 +1013,7 @@ public class UserService {
                 user.getPassword()
         )) {
 
-            throw new ResponseStatusException(
-                    HttpStatus.UNAUTHORIZED,
+            throw new InvalidResetCodeException(
                     "Reset code is invalid."
             );
         }
@@ -1024,8 +1021,7 @@ public class UserService {
         if (request.getNewPassword() == null
                 || request.getNewPassword().length() < 6) {
 
-            throw new ResponseStatusException(
-                    HttpStatus.BAD_REQUEST,
+            throw new InvalidFormatPasswordException(
                     "New password must be at least 6 characters long."
             );
         }
@@ -1033,8 +1029,7 @@ public class UserService {
         if (!request.getNewPassword()
                 .equals(request.getConfirmPassword())) {
 
-            throw new ResponseStatusException(
-                    HttpStatus.BAD_REQUEST,
+            throw new PasswordMismatchException(
                     "New password and confirm password do not match."
             );
         }
