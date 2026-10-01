@@ -16,6 +16,15 @@ public class SalesVoucherItemDTO {
 
     private String stockItemName;
 
+    /**
+     * Parent / Stock Group of the stock item.
+     *
+     * Example:
+     * Stock Item: Demo Item2
+     * Parent     : Raw Material
+     */
+    private String itemParentName;
+
     private BigDecimal rate;
 
     private String rateUnit;

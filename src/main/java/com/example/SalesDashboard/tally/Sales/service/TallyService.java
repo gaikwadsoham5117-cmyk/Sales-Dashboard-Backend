@@ -10,16 +10,6 @@ import com.example.SalesDashboard.tally.Sales.dto.SalesVoucherGSTRateDTO;
 import com.example.SalesDashboard.tally.Sales.dto.SalesVoucherItemDTO;
 import com.example.SalesDashboard.tally.Sales.dto.SalesVoucherLedgerDTO;
 import com.example.SalesDashboard.tally.Sales.dto.TallyRequest;
-import com.example.SalesDashboard.tally.Sales.exception.InvalidSalesDateRangeException;
-import com.example.SalesDashboard.tally.Sales.exception.SalesAgentStatusException;
-import com.example.SalesDashboard.tally.Sales.exception.SalesCompanyNameRequiredException;
-import com.example.SalesDashboard.tally.Sales.exception.SalesDateRangeRequiredException;
-import com.example.SalesDashboard.tally.Sales.exception.SalesDateRangeTooLargeException;
-import com.example.SalesDashboard.tally.Sales.exception.SalesEmptyResponseException;
-import com.example.SalesDashboard.tally.Sales.exception.SalesInvalidResponseException;
-import com.example.SalesDashboard.tally.Sales.exception.SalesRequestPreparationException;
-import com.example.SalesDashboard.tally.Sales.exception.SalesTallyErrorException;
-import com.example.SalesDashboard.user.exception.UserNotAuthenticatedException;
 
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
@@ -28,8 +18,10 @@ import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 
 import org.springframework.beans.factory.annotation.Value;
+import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.stereotype.Service;
+import org.springframework.web.server.ResponseStatusException;
 
 import java.math.BigDecimal;
 import java.time.LocalDate;
@@ -57,27 +49,12 @@ public class TallyService {
     private String tallyCompanyName;
 
     // =========================================================
-    // SAFETY LIMITS
+    // DATE-RANGE SAFETY LIMIT
     // =========================================================
-    //
-    // MAX_DATE_RANGE_DAYS:
-    //   Hard cap on how wide a single date-range request can be.
-    //   The Tally-side $Date filter keeps a single well-scoped
-    //   request cheap, but nothing stops a caller asking for
-    //   years of history in one call - cap it here regardless of
-    //   how well the Tally-side filter performs.
-    //
-    // SUSPICIOUS_RESULT_SIZE:
-    //   A same-day (or few-day) request should never realistically
-    //   return tens of thousands of Sales vouchers. If it does,
-    //   that is a strong signal the Tally-side $Date filter is NOT
-    //   being applied (e.g. after a TallyAPIConnector upgrade
-    //   changes how "Filters" / "System : Formulae" is handled)
-    //   and Tally is silently returning far more than requested.
-    //   We do not act on this automatically (that would just be
-    //   Java-side filtering again) - we log loudly so it gets
-    //   noticed before it becomes an OOM incident.
-    //
+    // Keep one backend request limited to roughly one month.
+    // This protects the Java service from accidentally receiving
+    // a very large Tally response. The actual filtering is still
+    // performed inside Tally by the date formula below.
     // =========================================================
 
     private static final long MAX_DATE_RANGE_DAYS = 31;
@@ -127,7 +104,9 @@ public class TallyService {
 
         if (body == null || body.isBlank()) {
 
-            throw new SalesEmptyResponseException("Tally returned an empty response"
+            throw new ResponseStatusException(
+                    HttpStatus.BAD_GATEWAY,
+                    "Tally returned an empty response"
             );
         }
 
@@ -139,7 +118,9 @@ public class TallyService {
 
         } catch (Exception e) {
 
-            throw new SalesInvalidResponseException("Tally returned an invalid response"
+            throw new ResponseStatusException(
+                    HttpStatus.BAD_GATEWAY,
+                    "Tally returned an invalid response"
             );
         }
 
@@ -149,9 +130,11 @@ public class TallyService {
 
         if (!"1".equals(status)) {
 
-            throw new SalesTallyErrorException("Tally reported an error for company '"
-                    + companyName
-                    + "'"
+            throw new ResponseStatusException(
+                    HttpStatus.BAD_GATEWAY,
+                    "Tally reported an error for company '"
+                            + companyName
+                            + "'"
             );
         }
 
@@ -184,6 +167,14 @@ public class TallyService {
             }
         }
 
+        populateItemParentNames(
+                vouchers,
+                userId,
+                companyName,
+                null,
+                null
+        );
+
         return vouchers;
     }
 
@@ -206,12 +197,16 @@ public class TallyService {
         validateCompanyName(companyName);
 
         if (from == null || to == null) {
-            throw new SalesDateRangeRequiredException("From and To dates are required"
+            throw new ResponseStatusException(
+                    HttpStatus.BAD_REQUEST,
+                    "From and To dates are required"
             );
         }
 
         if (from.isAfter(to)) {
-            throw new InvalidSalesDateRangeException("From date cannot be after To date"
+            throw new ResponseStatusException(
+                    HttpStatus.BAD_REQUEST,
+                    "From date cannot be after To date"
             );
         }
 
@@ -219,9 +214,11 @@ public class TallyService {
                 ChronoUnit.DAYS.between(from, to);
 
         if (requestedDays > MAX_DATE_RANGE_DAYS) {
-            throw new SalesDateRangeTooLargeException("Maximum allowed date range is "
-                    + MAX_DATE_RANGE_DAYS
-                    + " days"
+            throw new ResponseStatusException(
+                    HttpStatus.BAD_REQUEST,
+                    "Maximum allowed date range is "
+                            + MAX_DATE_RANGE_DAYS
+                            + " days"
             );
         }
 
@@ -241,7 +238,9 @@ public class TallyService {
         String body = response.getBody();
 
         if (body == null || body.isBlank()) {
-            throw new SalesEmptyResponseException("Tally returned an empty response"
+            throw new ResponseStatusException(
+                    HttpStatus.BAD_GATEWAY,
+                    "Tally returned an empty response"
             );
         }
 
@@ -250,7 +249,9 @@ public class TallyService {
         try {
             root = objectMapper.readTree(body);
         } catch (Exception e) {
-            throw new SalesInvalidResponseException("Tally returned an invalid response"
+            throw new ResponseStatusException(
+                    HttpStatus.BAD_GATEWAY,
+                    "Tally returned an invalid response"
             );
         }
 
@@ -259,9 +260,11 @@ public class TallyService {
                         .asText("");
 
         if (!"1".equals(status)) {
-            throw new SalesTallyErrorException("Tally reported an error for company '"
-                    + companyName
-                    + "'"
+            throw new ResponseStatusException(
+                    HttpStatus.BAD_GATEWAY,
+                    "Tally reported an error for company '"
+                            + companyName
+                            + "'"
             );
         }
 
@@ -276,34 +279,15 @@ public class TallyService {
             return vouchers;
         }
 
-        // ---------------------------------------------------------
-        // SANITY CHECK - not a filter, just a canary.
-        //
-        // A request spanning at most MAX_DATE_RANGE_DAYS days
-        // should never realistically come back with tens of
-        // thousands of Sales vouchers. If it does, the Tally-side
-        // $Date filter is most likely not being applied anymore
-        // (e.g. a TallyAPIConnector update changed how "Filters" /
-        // "System : Formulae" is handled) and Tally is silently
-        // sending back far more than requested. We still map and
-        // return what came back rather than guessing at a
-        // Java-side re-filter - that would reintroduce exactly the
-        // "fetch everything, filter in Java" pattern we removed -
-        // but we log loudly so this gets caught before it becomes
-        // an OOM incident.
-        // ---------------------------------------------------------
-
+        // This is only a safety canary. We deliberately do NOT
+        // filter the response in Java because that would reintroduce
+        // the fetch-everything-then-filter pattern.
         if (collection.size() > SUSPICIOUS_RESULT_SIZE) {
             log.warn(
-                    "Tally returned {} vouchers for a {}-day range "
-                            + "(from={}, to={}, company={}). This is "
-                            + "far more than expected for a bounded "
-                            + "date-range request - verify the "
-                            + "Tally-side $Date filter (Filters / "
-                            + "System : Formulae) is still being "
-                            + "applied by TallyAPIConnector.",
+                    "Tally returned {} vouchers for date range {} to {} "
+                            + "for company {}. Verify the Tally-side date "
+                            + "filter is being applied.",
                     collection.size(),
-                    requestedDays + 1,
                     from,
                     to,
                     companyName
@@ -323,24 +307,23 @@ public class TallyService {
             }
         }
 
+        populateItemParentNames(
+                vouchers,
+                userId,
+                companyName,
+                from,
+                to
+        );
+
         return vouchers;
     }
 
     // =========================================================
-    // TALLY $$Date LITERAL FORMAT
+    // BUILD DATE-RANGE TALLY REQUEST
     // =========================================================
-    //
-    // Format for dates baked into the $$Date:"..." literal used
-    // in the System : Formulae filter below. This is the ONE
-    // date-filtering approach we have actual confirmed evidence
-    // for: TallyAPIConnectorV2.0's own "Pull all Sales vouchers
-    // for a period" reference example uses exactly this pattern
-    // against this same company's data (same voucher GUID
-    // a8899ded-06d2-489a-b2f0-2dbe67a4b9ba-0000003b) and returns
-    // only the matching voucher:
-    //
-    //   $Date >= ($$Date:"02-04-2026") AND $Date <= ($$Date:"02-04-2026")
-    //
+    // IMPORTANT:
+    // Reuses the existing TSPLAllSalesVouchers collection.
+    // Only SVFromDate and SVToDate are changed.
     // =========================================================
 
     private static final DateTimeFormatter TALLY_DATE_LITERAL_FORMAT =
@@ -348,45 +331,6 @@ public class TallyService {
                     "dd-MM-yyyy",
                     java.util.Locale.ENGLISH
             );
-
-    // =========================================================
-    // BUILD DATE-RANGE TALLY REQUEST
-    // =========================================================
-    //
-    // IMPORTANT:
-    //
-    // The "Parm Var" version of this request (sourcing dates from
-    // ##SVFromDate/##SVToDate into a Date-typed local var) came
-    // back EMPTY against real data, even for a date that has a
-    // voucher. That means the filter WAS applied, but
-    // ##svfromdate/##svtodate resolved to nothing usable -
-    // most likely because "Parm Var" isn't implemented by this
-    // connector's dynamic JSON collection path the way it is in
-    // full native TDL (doc 2's Parm Var runs through the real TDL
-    // engine via a menu-loaded .txt file - a different execution
-    // path to this HTTP JSON export).
-    //
-    // We are reverting to literal $$Date:"dd-MM-yyyy" values baked
-    // directly into the formula text. This is the one approach we
-    // have actual confirmed proof for: TallyAPIConnectorV2.0's own
-    // reference example uses exactly this against this same
-    // company's data and returns the correct single voucher.
-    //
-    // The mechanism that keeps the result set small:
-    //
-    //   1. "Filters" on the collection, pointing at a
-    //      "System : Formulae" definition:
-    //
-    //          $Date >= ($$Date:"02-04-2026")
-    //              AND $Date <= ($$Date:"02-04-2026")
-    //
-    // Tally (via TallyAPIConnectorV2.0) evaluates this
-    // server-side while building the export, so only matching
-    // vouchers are ever sent back to this service - there is no
-    // "fetch everything, then filter" step here or in
-    // pullSalesVouchersByDateRange().
-    //
-    // =========================================================
 
     private TallyRequest buildSalesVouchersDateRangeRequest(
             String companyName,
@@ -412,12 +356,13 @@ public class TallyService {
                         )
                 );
 
-        // -----------------------------------------------------
-        // 1) COLLECTION DEFINITION
-        //    Same collection as buildAllSalesVouchersRequest,
-        //    plus a "Filters" attribute pointing at the date
-        //    range formula defined below.
-        // -----------------------------------------------------
+        // ---------------------------------------------------------
+        // COLLECTION
+        // ---------------------------------------------------------
+        // The important part is the Filter attribute (singular). The date
+        // range is evaluated by Tally before the JSON collection is
+        // returned to Java.
+        // ---------------------------------------------------------
 
         Map<String, Object> collectionMetadata =
                 Map.of(
@@ -427,7 +372,7 @@ public class TallyService {
                         "Collection"
                 );
 
-        List<Map<String, String>> attributes =
+        List<Map<String, String>> collectionAttributes =
                 List.of(
                         Map.of(
                                 "Type",
@@ -442,12 +387,16 @@ public class TallyService {
                                 "Yes"
                         ),
                         Map.of(
-                                "Filters",
+                                "Filter",
                                 "TSPLSalesDateRangeFilter"
                         ),
                         Map.of(
                                 "Fetch",
-                                "Date, VoucherTypeName, VoucherNumber, PartyLedgerName, GUID, MasterID"
+                                "Date, VoucherTypeName, VoucherNumber, PartyLedgerName, Reference, Amount, GUID, MasterID"
+                        ),
+                        Map.of(
+                                "Compute",
+                                "PartyParentName : $Parent:Ledger:$PartyLedgerName"
                         ),
                         Map.of(
                                 "Fetch",
@@ -458,17 +407,19 @@ public class TallyService {
         TallyRequest.Definition collectionDefinition =
                 TallyRequest.Definition.builder()
                         .metadata(collectionMetadata)
-                        .attributes(attributes)
+                        .attributes(collectionAttributes)
                         .build();
 
-        // -----------------------------------------------------
-        // 2) SYSTEM : FORMULAE DEFINITION
-        //    Name MUST match the "Filters" value above exactly.
-        //    Dates are baked directly into the formula text as
-        //    $$Date literals - Tally evaluates this per-voucher
-        //    while building the export, before anything is sent
-        //    back over the wire.
-        // -----------------------------------------------------
+        // ---------------------------------------------------------
+        // SYSTEM : FORMULAE
+        // ---------------------------------------------------------
+        // Do NOT use Parm Var here. Your real Tally test showed that
+        // the dynamic HTTP/JSON path can return an empty collection
+        // when the Parm Var values do not resolve.
+        //
+        // Instead the exact requested dates are placed directly into
+        // the Tally formula as $$Date literals.
+        // ---------------------------------------------------------
 
         Map<String, Object> formulaMetadata =
                 Map.of(
@@ -479,13 +430,16 @@ public class TallyService {
                         "sys_type",
                         "Formulae",
                         "ismodify",
-                        true
+                        "true"
                 );
 
+        // Use one range expression instead of generating one equality
+        // condition per day. This keeps the TDL formula small and
+        // avoids relying on a long OR expression for multi-day ranges.
         String formulaValue =
-                "$Date >= ($$Date:\""
+                "$Date BETWEEN ($$Date:\""
                         + fromDateLiteral
-                        + "\") AND $Date <= ($$Date:\""
+                        + "\") AND ($$Date:\""
                         + toDateLiteral
                         + "\")";
 
@@ -514,6 +468,460 @@ public class TallyService {
     }
 
     // =========================================================
+    // ITEM PARENT ENRICHMENT
+    // =========================================================
+    //
+    // The earlier approach tried to export every Stock Item master
+    // and then match the names in Java. That is not the safest way
+    // to resolve $Parent:StockItem:$StockItemName for inventory
+    // entries.
+    //
+    // Instead, Tally itself walks the Inventory Entries of the sales
+    // vouchers and computes ItemParentName in the Inventory Entry
+    // context. This is the same context in which
+    // $Parent:StockItem:$StockItemName is valid for each item.
+    //
+    // Java receives one compact map:
+    //     StockItemName -> ItemParentName
+    // and enriches every item in the already-fetched vouchers.
+    // =========================================================
+
+    private void populateItemParentNames(
+            List<SalesVoucherDTO> vouchers,
+            String userId,
+            String companyName,
+            LocalDate from,
+            LocalDate to
+    ) {
+
+        if (vouchers == null || vouchers.isEmpty()) {
+            return;
+        }
+
+        boolean needsParentLookup = false;
+
+        for (SalesVoucherDTO voucher : vouchers) {
+
+            if (voucher == null || voucher.getItems() == null) {
+                continue;
+            }
+
+            for (SalesVoucherItemDTO item : voucher.getItems()) {
+
+                if (item == null) {
+                    continue;
+                }
+
+                String existingParent =
+                        cleanTallyText(item.getItemParentName());
+
+                String stockItemName =
+                        cleanTallyText(item.getStockItemName());
+
+                if ((existingParent == null || existingParent.isBlank())
+                        && stockItemName != null
+                        && !stockItemName.isBlank()) {
+
+                    needsParentLookup = true;
+                    break;
+                }
+            }
+
+            if (needsParentLookup) {
+                break;
+            }
+        }
+
+        if (!needsParentLookup) {
+            return;
+        }
+
+        Map<String, String> stockItemParentMap =
+                fetchStockItemParentMap(
+                        userId,
+                        companyName,
+                        from,
+                        to
+                );
+
+        if (stockItemParentMap.isEmpty()) {
+            log.warn(
+                    "No inventory Stock Item -> Parent mappings returned by Tally for company {}",
+                    companyName
+            );
+            return;
+        }
+
+        int updatedCount = 0;
+
+        for (SalesVoucherDTO voucher : vouchers) {
+
+            if (voucher == null || voucher.getItems() == null) {
+                continue;
+            }
+
+            for (SalesVoucherItemDTO item : voucher.getItems()) {
+
+                if (item == null) {
+                    continue;
+                }
+
+                String existingParent =
+                        cleanTallyText(item.getItemParentName());
+
+                if (existingParent != null && !existingParent.isBlank()) {
+                    continue;
+                }
+
+                String stockItemName =
+                        cleanTallyText(item.getStockItemName());
+
+                if (stockItemName == null || stockItemName.isBlank()) {
+                    continue;
+                }
+
+                String parent =
+                        stockItemParentMap.get(
+                                normalizeMasterKey(stockItemName)
+                        );
+
+                if (parent != null && !parent.isBlank()) {
+                    item.setItemParentName(parent);
+                    updatedCount++;
+                }
+            }
+        }
+
+        log.info(
+                "Resolved item parent names for {} inventory items in company {}",
+                updatedCount,
+                companyName
+        );
+    }
+
+    // =========================================================
+    // FETCH ITEM PARENT MAP FROM INVENTORY ENTRY CONTEXT
+    // =========================================================
+
+    private Map<String, String> fetchStockItemParentMap(
+            String userId,
+            String companyName,
+            LocalDate from,
+            LocalDate to
+    ) {
+
+        TallyRequest request =
+                buildStockItemParentsRequest(
+                        companyName,
+                        from,
+                        to
+                );
+
+        Map<String, String> result =
+                new java.util.HashMap<>();
+
+        ResponseEntity<String> response =
+                callTallyCollection(
+                        userId,
+                        request,
+                        "TSPLStockItemParents"
+                );
+
+        String body = response.getBody();
+
+        if (body == null || body.isBlank()) {
+            throw new ResponseStatusException(
+                    HttpStatus.BAD_GATEWAY,
+                    "Tally returned an empty Stock Item parent response"
+            );
+        }
+
+        JsonNode root;
+
+        try {
+            root = objectMapper.readTree(body);
+        } catch (Exception e) {
+            throw new ResponseStatusException(
+                    HttpStatus.BAD_GATEWAY,
+                    "Tally returned an invalid Stock Item parent response"
+            );
+        }
+
+        String status =
+                root.path("status").asText("");
+
+        if (!"1".equals(status)) {
+            log.warn(
+                    "Stock Item parent Tally response failed for company {}: {}",
+                    companyName,
+                    root
+            );
+
+            throw new ResponseStatusException(
+                    HttpStatus.BAD_GATEWAY,
+                    "Tally reported an error while fetching Stock Item parents for company '"
+                            + companyName
+                            + "'"
+            );
+        }
+
+        JsonNode collection =
+                root.path("data").path("collection");
+
+        if (!collection.isArray()) {
+            log.warn(
+                    "Stock Item parent response has no collection for company {}. Raw response: {}",
+                    companyName,
+                    root
+            );
+            return result;
+        }
+
+        for (JsonNode itemNode : collection) {
+
+            if (itemNode == null || itemNode.isNull()) {
+                continue;
+            }
+
+            String name =
+                    cleanTallyText(
+                            extractFirstValue(
+                                    itemNode,
+                                    "stockitemname",
+                                    "name",
+                                    "itemname"
+                            )
+                    );
+
+            String parent =
+                    cleanTallyText(
+                            extractFirstValue(
+                                    itemNode,
+                                    "itemparentname",
+                                    "stockgroup",
+                                    "stockgroupname",
+                                    "parent"
+                            )
+                    );
+
+            if (name == null || name.isBlank()) {
+                continue;
+            }
+
+            if (parent != null && !parent.isBlank()) {
+                result.put(
+                        normalizeMasterKey(name),
+                        parent
+                );
+            }
+        }
+
+        log.info(
+                "Tally returned {} item-parent mappings for company {}",
+                result.size(),
+                companyName
+        );
+
+        if (result.isEmpty()) {
+            log.warn(
+                    "Tally returned zero item-parent mappings. Raw collection sample: {}",
+                    collection.size() > 0 ? collection.get(0) : "<empty>"
+            );
+        }
+
+        return result;
+    }
+
+    // =========================================================
+    // BUILD ITEM PARENT REQUEST
+    // =========================================================
+
+    private TallyRequest buildStockItemParentsRequest(
+            String companyName,
+            LocalDate from,
+            LocalDate to
+    ) {
+
+        List<TallyRequest.StaticVariable> staticVariables =
+                List.of(
+                        new TallyRequest.StaticVariable(
+                                "svExportFormat",
+                                "jsonex"
+                        ),
+                        new TallyRequest.StaticVariable(
+                                "svCurrentCompany",
+                                companyName
+                        )
+                );
+
+        // ---------------------------------------------------------
+        // SOURCE: SALES VOUCHERS
+        // ---------------------------------------------------------
+
+        List<Map<String, String>> sourceAttributes =
+                new ArrayList<>();
+
+        sourceAttributes.add(
+                Map.of(
+                        "Type",
+                        "Vouchers : VoucherType"
+                )
+        );
+
+        sourceAttributes.add(
+                Map.of(
+                        "Child of",
+                        "$$VchTypeSales"
+                )
+        );
+
+        sourceAttributes.add(
+                Map.of(
+                        "Belongs To",
+                        "Yes"
+                )
+        );
+
+        if (from != null && to != null) {
+            sourceAttributes.add(
+                    Map.of(
+                            "Filter",
+                            "TSPLSalesDateRangeFilter"
+                    )
+            );
+        }
+
+        TallyRequest.Definition sourceDefinition =
+                TallyRequest.Definition.builder()
+                        .metadata(
+                                Map.of(
+                                        "name",
+                                        "TSPLItemParentSource",
+                                        "type",
+                                        "Collection"
+                                )
+                        )
+                        .attributes(sourceAttributes)
+                        .build();
+
+        // ---------------------------------------------------------
+        // SUMMARY: WALK INVENTORY ENTRIES
+        // ---------------------------------------------------------
+        // The critical difference is that Compute is now executed
+        // while the current object is an Inventory Entry. Therefore
+        // $StockItemName refers to EACH individual item.
+        // ---------------------------------------------------------
+
+        List<Map<String, String>> summaryAttributes =
+                List.of(
+                        Map.of(
+                                "Source Collection",
+                                "TSPLItemParentSource"
+                        ),
+                        Map.of(
+                                "Walk",
+                                "Inventory Entries"
+                        ),
+                        Map.of(
+                                "By",
+                                "StockItemName : $StockItemName"
+                        ),
+                        Map.of(
+                                "Compute",
+                                "ItemParentName : $Parent:StockItem:$StockItemName"
+                        ),
+                        Map.of(
+                                "Keep Source",
+                                "()"
+                        )
+                );
+
+        TallyRequest.Definition summaryDefinition =
+                TallyRequest.Definition.builder()
+                        .metadata(
+                                Map.of(
+                                        "name",
+                                        "TSPLStockItemParents",
+                                        "type",
+                                        "Collection"
+                                )
+                        )
+                        .attributes(summaryAttributes)
+                        .build();
+
+        List<TallyRequest.Definition> definitions =
+                new ArrayList<>();
+
+        definitions.add(sourceDefinition);
+        definitions.add(summaryDefinition);
+
+        // ---------------------------------------------------------
+        // SAME DATE FORMULA AS THE SALES RANGE REQUEST
+        // ---------------------------------------------------------
+
+        if (from != null && to != null) {
+
+            String fromDateLiteral =
+                    from.format(TALLY_DATE_LITERAL_FORMAT);
+
+            String toDateLiteral =
+                    to.format(TALLY_DATE_LITERAL_FORMAT);
+
+            String formulaValue =
+                    "$Date BETWEEN ($$Date:\""
+                            + fromDateLiteral
+                            + "\") AND ($$Date:\""
+                            + toDateLiteral
+                            + "\")";
+
+            TallyRequest.Definition formulaDefinition =
+                    TallyRequest.Definition.builder()
+                            .metadata(
+                                    Map.of(
+                                            "name",
+                                            "TSPLSalesDateRangeFilter",
+                                            "type",
+                                            "System",
+                                            "sys_type",
+                                            "Formulae",
+                                            "ismodify",
+                                            "true"
+                                    )
+                            )
+                            .value(formulaValue)
+                            .build();
+
+            definitions.add(formulaDefinition);
+        }
+
+        TallyRequest.TdlMessage message =
+                TallyRequest.TdlMessage.builder()
+                        .definitions(definitions)
+                        .build();
+
+        return TallyRequest.builder()
+                .staticVariables(staticVariables)
+                .tdlmessage(List.of(message))
+                .build();
+    }
+
+    // =========================================================
+    // NORMALIZE MASTER NAME FOR LOOKUP
+    // =========================================================
+
+    private String normalizeMasterKey(String value) {
+
+        if (value == null) {
+            return "";
+        }
+
+        return value
+                .trim()
+                .replaceAll("\\s+", " ")
+                .toLowerCase(java.util.Locale.ROOT);
+    }
+
+    // =========================================================
     // MAP COMPLETE VOUCHER
     // =========================================================
 
@@ -530,6 +938,13 @@ public class TallyService {
         String voucherNumber =
                 extractValue(
                         voucherNode.path("vouchernumber")
+                );
+
+        String reference =
+                cleanTallyText(
+                        extractValue(
+                                voucherNode.path("reference")
+                        )
                 );
 
         // -----------------------------------------------------
@@ -572,6 +987,15 @@ public class TallyService {
         // -----------------------------------------------------
         // PARTY LEDGER AMOUNT
         // -----------------------------------------------------
+
+        String partyParentName =
+                extractFirstValue(
+                        voucherNode,
+                        "partyparentname",
+                        "partygrouponame",
+                        "partyparent",
+                        "partygpname"
+                );
 
         BigDecimal partyLedgerAmount =
                 extractPartyLedgerAmount(
@@ -626,16 +1050,12 @@ public class TallyService {
                         )
                 )
 
-                .guid(
-                        extractValue(
-                                voucherNode.path("guid")
-                        )
+                .partyParentName(
+                        partyParentName
                 )
 
-                .masterId(
-                        extractValue(
-                                voucherNode.path("masterid")
-                        )
+                .reference(
+                        reference
                 )
 
                 .totalAmount(
@@ -649,6 +1069,35 @@ public class TallyService {
                 .gstDetails(gstDetails)
 
                 .build();
+    }
+
+    // =========================================================
+    // EXTRACT FIRST NON-EMPTY VALUE FROM MULTIPLE FIELD NAMES
+    // =========================================================
+
+    private String extractFirstValue(
+            JsonNode node,
+            String... fieldNames
+    ) {
+
+        if (node == null || node.isNull()) {
+            return null;
+        }
+
+        for (String fieldName : fieldNames) {
+
+            JsonNode valueNode = node.path(fieldName);
+
+            String value = cleanTallyText(
+                    extractValue(valueNode)
+            );
+
+            if (value != null && !value.isBlank()) {
+                return value;
+            }
+        }
+
+        return null;
     }
 
     // =========================================================
@@ -711,6 +1160,15 @@ public class TallyService {
                             )
                     );
 
+            String itemParentName =
+                    extractFirstValue(
+                            itemNode,
+                            "itemparentname",
+                            "stockitemparentname",
+                            "stockgroupname",
+                            "parent"
+                    );
+
             String rate =
                     extractValue(
                             itemNode.path("rate")
@@ -757,6 +1215,10 @@ public class TallyService {
 
                             .stockItemName(
                                     stockItemName
+                            )
+
+                            .itemParentName(
+                                    itemParentName
                             )
 
                             .rate(
@@ -1680,7 +2142,9 @@ public class TallyService {
         if (userId == null
                 || userId.isBlank()) {
 
-            throw new UserNotAuthenticatedException("Authenticated user is required"
+            throw new ResponseStatusException(
+                    HttpStatus.UNAUTHORIZED,
+                    "Authenticated user is required"
             );
         }
     }
@@ -1696,7 +2160,9 @@ public class TallyService {
         if (companyName == null
                 || companyName.isBlank()) {
 
-            throw new SalesCompanyNameRequiredException("Company name cannot be empty"
+            throw new ResponseStatusException(
+                    HttpStatus.BAD_REQUEST,
+                    "Company name cannot be empty"
             );
         }
     }
@@ -1761,7 +2227,11 @@ public class TallyService {
 
                         Map.of(
                                 "Fetch",
-                                "Date, VoucherTypeName, VoucherNumber, PartyLedgerName, GUID, MasterID"
+                                "Date, VoucherTypeName, VoucherNumber, PartyLedgerName, Reference, GUID, MasterID"
+                        ),
+                        Map.of(
+                                "Compute",
+                                "PartyParentName : $Parent:Ledger:$PartyLedgerName"
                         ),
 
                         Map.of(
@@ -1808,6 +2278,23 @@ public class TallyService {
             TallyRequest requestBody
     ) {
 
+        return callTallyCollection(
+                userId,
+                requestBody,
+                "TSPLAllSalesVouchers"
+        );
+    }
+
+    // =========================================================
+    // GENERIC TALLY COLLECTION CALL
+    // =========================================================
+
+    private ResponseEntity<String> callTallyCollection(
+            String userId,
+            TallyRequest requestBody,
+            String collectionId
+    ) {
+
         Map<String, String> headers =
                 Map.of(
                         "Content-Type",
@@ -1823,7 +2310,7 @@ public class TallyService {
                         "collection",
 
                         "id",
-                        "TSPLAllSalesVouchers"
+                        collectionId
                 );
 
         return relayToAgent(
@@ -1854,26 +2341,41 @@ public class TallyService {
 
         } catch (Exception e) {
 
-            throw new SalesRequestPreparationException("Failed to build Tally request"
+            throw new ResponseStatusException(
+                    HttpStatus.INTERNAL_SERVER_ERROR,
+                    "Failed to build Tally request"
             );
         }
 
-        /*
-         * AgentRelayService already throws specific Agent*Exception
-         * types (offline, timeout, not found ...), so they are NOT
-         * caught here - they go straight to GlobalExceptionHandler.
-         */
-        AgentRelayService.RelayResponse response =
-                agentRelayService.relay(
-                        userId,
-                        "POST",
-                        headers,
-                        jsonBody
-                );
+        AgentRelayService.RelayResponse response;
+
+        try {
+
+            response =
+                    agentRelayService.relay(
+                            userId,
+                            "POST",
+                            headers,
+                            jsonBody
+                    );
+
+        } catch (ResponseStatusException e) {
+
+            throw e;
+
+        } catch (Exception e) {
+
+            throw new ResponseStatusException(
+                    HttpStatus.BAD_GATEWAY,
+                    "Unable to communicate with Tally Agent"
+            );
+        }
 
         if (response == null) {
 
-            throw new SalesEmptyResponseException("Tally Agent returned no response"
+            throw new ResponseStatusException(
+                    HttpStatus.BAD_GATEWAY,
+                    "Tally Agent returned no response"
             );
         }
 
@@ -1886,7 +2388,9 @@ public class TallyService {
         if (status < 200
                 || status >= 300) {
 
-            throw new SalesAgentStatusException("Tally Agent returned an unsuccessful response"
+            throw new ResponseStatusException(
+                    HttpStatus.BAD_GATEWAY,
+                    "Tally Agent returned an unsuccessful response"
             );
         }
 

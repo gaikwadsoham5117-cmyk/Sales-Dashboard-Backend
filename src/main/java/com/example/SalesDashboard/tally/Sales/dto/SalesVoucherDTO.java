@@ -22,9 +22,16 @@ public class SalesVoucherDTO {
 
     private String partyLedgerName;
 
-    private String guid;
+    /**
+     * Parent / Group of the party ledger.
+     * Example: Sundry Debtors
+     */
+    private String partyParentName;
 
-    private String masterId;
+    /**
+     * Voucher reference / reference number.
+     */
+    private String reference;
 
     private BigDecimal totalAmount;
 
