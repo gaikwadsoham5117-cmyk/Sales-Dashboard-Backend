@@ -87,10 +87,10 @@ public SecurityFilterChain securityFilterChain(HttpSecurity http) throws Excepti
 
                     // User APIs
                     .requestMatchers("/api/user/lookup/all")
-                    .hasAnyAuthority(UserRoles.ALL())
+                    .hasAnyAuthority("ADMIN")
 
                     .requestMatchers("/api/user/lookup/all/active")
-                    .hasAnyAuthority("USER")
+                    .hasAnyAuthority("ADMIN")
 
                     .requestMatchers("/api/user/*/update/allfields")
                     .hasAnyAuthority(UserRoles.ALL())
@@ -105,16 +105,63 @@ public SecurityFilterChain securityFilterChain(HttpSecurity http) throws Excepti
                     .hasAnyAuthority(UserRoles.ALL())
 
                     .requestMatchers("/api/user/lookup/status")
-                    .hasAnyAuthority("USER", "ADMIN")
+                    .hasAnyAuthority("OWNER", "ADMIN")
 
                     .requestMatchers("/api/user/lookup/all/users/*")
                     .hasAnyAuthority(UserRoles.ALL())
 
-                    .requestMatchers("/api/subscriptions")
+                    .requestMatchers("/api/subscriptions/lookup/all")
                     .hasAnyAuthority("ADMIN")
 
                     .requestMatchers("/api/subscriptions/*")
                     .hasAnyAuthority("ADMIN")
+
+                    .requestMatchers("/api/employees/*")
+                    .hasAnyAuthority("OWNER")
+
+                    .requestMatchers("/api/lookup/user/*/organizations")
+                    .hasAnyAuthority("OWNER")
+
+                    .requestMatchers("/api/employees/register")
+                    .hasAnyAuthority("OWNER")
+
+
+                    // Subscriptions
+
+                    .requestMatchers("/api/subscriptions/Create")
+                    .hasAnyAuthority("ADMIN")
+
+                    .requestMatchers("/api/subscriptions/update/*")
+                    .hasAnyAuthority("ADMIN")
+
+                    .requestMatchers("/api/subscriptions/delete/*")
+                    .hasAnyAuthority("ADMIN")
+
+
+                    //Organizations
+
+                    .requestMatchers("/api/organizations/create")
+                    .hasAnyAuthority("ADMIN")
+
+                    .requestMatchers("/api/organizations/update/*")
+                    .hasAnyAuthority("ADMIN")
+
+                    .requestMatchers("/api/organizations/delete/*")
+                    .hasAnyAuthority("ADMIN")
+
+                    //Sales
+
+                    .requestMatchers("/api/tally/*/sales-vouchers")
+                    .hasAnyAuthority("OWNER","EMPLOYEE")
+
+                    .requestMatchers("/api/tally/*/sales-vouchers/date-range")
+                    .hasAnyAuthority("OWNER","EMPLOYEE")
+
+                    //company
+
+                    .requestMatchers("/api/company/all")
+                    .hasAnyAuthority("OWNER","EMPLOYEE")
+
 
                     .anyRequest()
                     .authenticated()

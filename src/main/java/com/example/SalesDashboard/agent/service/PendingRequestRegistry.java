@@ -1,8 +1,8 @@
 package com.example.SalesDashboard.agent.service;
 
 import com.fasterxml.jackson.databind.JsonNode;
-import com.fasterxml.jackson.databind.node.ObjectNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.fasterxml.jackson.databind.node.ObjectNode;
 
 import org.springframework.stereotype.Component;
 
@@ -12,46 +12,66 @@ import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.TimeUnit;
 
-/**
- * Correlates outgoing PROXY_REQUEST messages with responses coming
- * back from the Tally Agent.
- *
- * Supports both:
- *
- * 1. Legacy single-message response:
- *      PROXY_RESPONSE
- *
- * 2. New streamed response:
- *      PROXY_RESPONSE_START
- *      PROXY_RESPONSE_CHUNK
- *      PROXY_RESPONSE_END
- *
- * The streamed protocol prevents one very large Tally response from
- * being sent as a single WebSocket frame.
- */
 @Component
 public class PendingRequestRegistry {
 
+    /*
+     * ============================================================
+     * RESPONSE TIMEOUT
+     * ============================================================
+     *
+     * This timeout starts when the request actually reaches the
+     * front of the Agent queue and is sent to the Agent.
+     *
+     * It does NOT include time spent waiting inside the queue.
+     */
     private static final Duration DEFAULT_TIMEOUT =
-            Duration.ofSeconds(20);
+            Duration.ofSeconds(240);
 
+    /*
+     * ============================================================
+     * PENDING REQUESTS
+     * ============================================================
+     */
     private final Map<String, PendingResponse> pending =
             new ConcurrentHashMap<>();
 
+    /*
+     * ============================================================
+     * OBJECT MAPPER
+     * ============================================================
+     */
     private final ObjectMapper mapper =
             new ObjectMapper();
-
 
     // ============================================================
     // REGISTER
     // ============================================================
 
     /**
-     * Registers a request before PROXY_REQUEST is sent to the agent.
+     * Register a request and return a Future that will be completed
+     * when the complete Tally response has been received.
      */
     public CompletableFuture<JsonNode> register(
             String requestId
     ) {
+
+        if (
+                requestId == null
+                        || requestId.isBlank()
+        ) {
+
+            CompletableFuture<JsonNode> failed =
+                    new CompletableFuture<>();
+
+            failed.completeExceptionally(
+                    new IllegalArgumentException(
+                            "Request ID is required"
+                    )
+            );
+
+            return failed;
+        }
 
         PendingResponse pendingResponse =
                 new PendingResponse();
@@ -65,8 +85,8 @@ public class PendingRequestRegistry {
                 pendingResponse.future;
 
         /*
-         * Always remove the request when it completes,
-         * fails or times out.
+         * Remove from registry whenever the request finishes,
+         * successfully or exceptionally.
          */
         future.whenComplete(
                 (result, error) ->
@@ -76,29 +96,42 @@ public class PendingRequestRegistry {
                         )
         );
 
+        /*
+         * Timeout applies to this pending request.
+         */
         return future.orTimeout(
                 DEFAULT_TIMEOUT.toSeconds(),
                 TimeUnit.SECONDS
         );
     }
 
-
     // ============================================================
-    // LEGACY COMPLETE
+    // NORMAL COMPLETE
     // ============================================================
 
     /**
-     * Handles the old single PROXY_RESPONSE format.
+     * Completes a request that returned one complete
+     * PROXY_RESPONSE message.
      *
-     * This is kept for backward compatibility and for agent errors.
+     * Kept for compatibility with non-streaming responses.
      */
     public void complete(
             String requestId,
             JsonNode response
     ) {
 
+        if (
+                requestId == null
+                        || requestId.isBlank()
+        ) {
+
+            return;
+        }
+
         PendingResponse pendingResponse =
-                pending.get(requestId);
+                pending.get(
+                        requestId
+                );
 
         if (pendingResponse != null) {
 
@@ -108,20 +141,20 @@ public class PendingRequestRegistry {
         }
     }
 
-
     // ============================================================
     // STREAM START
     // ============================================================
 
     /**
-     * Starts a streamed response.
+     * Called when Agent sends:
+     *
+     * PROXY_RESPONSE_START
      *
      * Example:
      *
      * {
      *   "type": "PROXY_RESPONSE_START",
      *   "requestId": "...",
-     *   "ok": true,
      *   "status": 200
      * }
      */
@@ -130,47 +163,75 @@ public class PendingRequestRegistry {
             int status
     ) {
 
-        PendingResponse pendingResponse =
-                pending.get(requestId);
+        if (
+                requestId == null
+                        || requestId.isBlank()
+        ) {
 
-        if (pendingResponse == null) {
             return;
         }
 
-        pendingResponse.status = status;
-        pendingResponse.streaming = true;
-    }
+        PendingResponse pendingResponse =
+                pending.get(
+                        requestId
+                );
 
+        if (pendingResponse == null) {
+
+            return;
+        }
+
+        pendingResponse.status =
+                status;
+
+        pendingResponse.streaming =
+                true;
+    }
 
     // ============================================================
     // STREAM CHUNK
     // ============================================================
 
     /**
-     * Appends one response chunk.
+     * Called for every:
      *
-     * IMPORTANT:
-     * We append chunks directly into one StringBuilder.
-     *
-     * We do NOT create a new String containing the complete
-     * response for every chunk.
+     * PROXY_RESPONSE_CHUNK
      */
     public void appendChunk(
             String requestId,
             String chunk
     ) {
 
-        if (chunk == null || chunk.isEmpty()) {
+        if (
+                requestId == null
+                        || requestId.isBlank()
+        ) {
+
+            return;
+        }
+
+        if (
+                chunk == null
+                        || chunk.isEmpty()
+        ) {
+
             return;
         }
 
         PendingResponse pendingResponse =
-                pending.get(requestId);
+                pending.get(
+                        requestId
+                );
 
         if (pendingResponse == null) {
+
             return;
         }
 
+        /*
+         * StringBuilder is only accessed by one request at a time,
+         * but synchronize here for safety.
+         */
         synchronized (pendingResponse) {
 
             pendingResponse.body.append(
@@ -179,26 +240,45 @@ public class PendingRequestRegistry {
         }
     }
 
-
     // ============================================================
     // STREAM END
     // ============================================================
 
     /**
-     * Completes a streamed response.
+     * Called when Agent sends:
      *
-     * At this point the backend converts the accumulated response
-     * into the same JsonNode structure that the old PROXY_RESPONSE
-     * used.
+     * PROXY_RESPONSE_END
+     *
+     * This creates the final response structure expected by
+     * AgentRelayService:
+     *
+     * {
+     *   "type": "PROXY_RESPONSE",
+     *   "requestId": "...",
+     *   "ok": true,
+     *   "status": 200,
+     *   "body": "..."
+     * }
      */
     public void completeStream(
             String requestId
     ) {
 
+        if (
+                requestId == null
+                        || requestId.isBlank()
+        ) {
+
+            return;
+        }
+
         PendingResponse pendingResponse =
-                pending.get(requestId);
+                pending.get(
+                        requestId
+                );
 
         if (pendingResponse == null) {
+
             return;
         }
 
@@ -223,6 +303,15 @@ public class PendingRequestRegistry {
                 requestId
         );
 
+        /*
+         * VERY IMPORTANT:
+         *
+         * This MUST be true.
+         *
+         * AgentRelayService checks:
+         *
+         * response.path("ok").asBoolean(false)
+         */
         response.put(
                 "ok",
                 true
@@ -243,34 +332,38 @@ public class PendingRequestRegistry {
         );
     }
 
-
     // ============================================================
     // FAIL
     // ============================================================
 
-    /**
-     * Fails a pending request immediately.
-     */
     public void fail(
             String requestId,
             Throwable error
     ) {
 
+        if (
+                requestId == null
+                        || requestId.isBlank()
+        ) {
+
+            return;
+        }
+
         PendingResponse pendingResponse =
-                pending.get(requestId);
+                pending.get(
+                        requestId
+                );
 
         if (pendingResponse != null) {
 
-            pendingResponse.future
-                    .completeExceptionally(
-                            error
-                    );
+            pendingResponse.future.completeExceptionally(
+                    error
+            );
         }
     }
 
-
     // ============================================================
-    // INTERNAL STATE
+    // INTERNAL PENDING RESPONSE
     // ============================================================
 
     private static final class PendingResponse {
@@ -281,8 +374,10 @@ public class PendingRequestRegistry {
         private final StringBuilder body =
                 new StringBuilder();
 
-        private volatile int status = 200;
+        private volatile int status =
+                200;
 
-        private volatile boolean streaming = false;
+        private volatile boolean streaming =
+                false;
     }
 }

@@ -30,6 +30,8 @@ import java.time.temporal.ChronoUnit;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
+import java.util.concurrent.Semaphore;
+import java.util.concurrent.TimeUnit;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
@@ -60,6 +62,36 @@ public class TallyService {
     private static final long MAX_DATE_RANGE_DAYS = 31;
 
     private static final int SUSPICIOUS_RESULT_SIZE = 20_000;
+
+    // =========================================================
+    // TALLY SERIALIZATION GATE
+    // =========================================================
+    //
+    // Tally's HTTP/XML gateway is built around ONE interactive
+    // desktop session: "current company" and "current period"
+    // are global state inside Tally itself, not scoped per HTTP
+    // request. When two exports hit it at the same moment, one
+    // request's svCurrentCompany / date context can be stepped on
+    // mid-export by the other - this is what was producing
+    // vouchersFromTally=0 for date ranges that genuinely have
+    // data, whenever several months were requested concurrently
+    // (e.g. a 12-month report firing all 12 calls in parallel).
+    //
+    // A single-permit, fair Semaphore ensures only one export is
+    // ever in flight to Tally at a time; every other caller - no
+    // matter how many hit this service concurrently - simply
+    // queues and is served in the order it arrived. "Fair" mode
+    // (true) guarantees FIFO ordering rather than letting threads
+    // jump the queue.
+    //
+    // TALLY_WAIT_TIMEOUT_SECONDS bounds how long a caller will
+    // wait for its turn before giving up with a clear 503, rather
+    // than queuing forever if Tally itself is stuck or very slow.
+    // =========================================================
+
+    private final Semaphore tallyGate = new Semaphore(1, true);
+
+    private static final long TALLY_WAIT_TIMEOUT_SECONDS = 120;
 
     // =========================================================
     // DEFAULT COMPANY
@@ -182,8 +214,8 @@ public class TallyService {
     // DATE-RANGE SALES VOUCHERS
     // =========================================================
     // Uses the existing TSPLAllSalesVouchers collection.
-    // Only SVFromDate and SVToDate are supplied for the requested range.
-    // No new collection and no new date-filter formula are created.
+    // SVFromDate and SVToDate are supplied as Tally system variables,
+    // and the exact requested range is also enforced by the TDL formula.
     // =========================================================
 
     public List<SalesVoucherDTO> pullSalesVouchersByDateRange(
@@ -276,8 +308,23 @@ public class TallyService {
                 new ArrayList<>();
 
         if (!collection.isArray()) {
+            log.warn(
+                    "TALLY DATE RANGE RESPONSE HAS NO ARRAY | company={} | from={} | to={} | response={}",
+                    companyName,
+                    from,
+                    to,
+                    root
+            );
             return vouchers;
         }
+
+        log.info(
+                "TALLY DATE RANGE RESPONSE | company={} | from={} | to={} | vouchersFromTally={}",
+                companyName,
+                from,
+                to,
+                collection.size()
+        );
 
         // This is only a safety canary. We deliberately do NOT
         // filter the response in Java because that would reintroduce
@@ -302,8 +349,15 @@ public class TallyService {
                 if (voucher != null) {
                     vouchers.add(voucher);
                 }
-            } catch (Exception ignored) {
-                // One malformed voucher should not fail the complete request.
+            } catch (Exception e) {
+                log.warn(
+                        "FAILED TO MAP TALLY VOUCHER | company={} | date={} | voucherNumber={} | error={}",
+                        companyName,
+                        extractValue(voucherNode.path("date")),
+                        extractValue(voucherNode.path("vouchernumber")),
+                        e.getMessage(),
+                        e
+                );
             }
         }
 
@@ -332,6 +386,13 @@ public class TallyService {
                     java.util.Locale.ENGLISH
             );
 
+    // Tally system date variables use the universal date format YYYYMMDD.
+    private static final DateTimeFormatter TALLY_PERIOD_DATE_FORMAT =
+            DateTimeFormatter.ofPattern(
+                    "yyyyMMdd",
+                    java.util.Locale.ENGLISH
+            );
+
     private TallyRequest buildSalesVouchersDateRangeRequest(
             String companyName,
             LocalDate from,
@@ -344,6 +405,21 @@ public class TallyService {
         String toDateLiteral =
                 to.format(TALLY_DATE_LITERAL_FORMAT);
 
+        String fromPeriod =
+                from.format(TALLY_PERIOD_DATE_FORMAT);
+
+        String toPeriod =
+                to.format(TALLY_PERIOD_DATE_FORMAT);
+
+        log.info(
+                "TALLY DATE RANGE REQUEST | company={} | from={} | to={} | SVFROMDATE={} | SVTODATE={}",
+                companyName,
+                from,
+                to,
+                fromPeriod,
+                toPeriod
+        );
+
         List<TallyRequest.StaticVariable> staticVariables =
                 List.of(
                         new TallyRequest.StaticVariable(
@@ -353,6 +429,14 @@ public class TallyService {
                         new TallyRequest.StaticVariable(
                                 "svCurrentCompany",
                                 companyName
+                        ),
+                        new TallyRequest.StaticVariable(
+                                "svFromDate",
+                                fromPeriod
+                        ),
+                        new TallyRequest.StaticVariable(
+                                "svToDate",
+                                toPeriod
                         )
                 );
 
@@ -742,17 +826,50 @@ public class TallyService {
             LocalDate to
     ) {
 
-        List<TallyRequest.StaticVariable> staticVariables =
-                List.of(
-                        new TallyRequest.StaticVariable(
-                                "svExportFormat",
-                                "jsonex"
-                        ),
-                        new TallyRequest.StaticVariable(
-                                "svCurrentCompany",
-                                companyName
-                        )
-                );
+        List<TallyRequest.StaticVariable> staticVariables;
+
+        if (from != null && to != null) {
+
+            String fromPeriod =
+                    from.format(TALLY_PERIOD_DATE_FORMAT);
+
+            String toPeriod =
+                    to.format(TALLY_PERIOD_DATE_FORMAT);
+
+            staticVariables =
+                    List.of(
+                            new TallyRequest.StaticVariable(
+                                    "svExportFormat",
+                                    "jsonex"
+                            ),
+                            new TallyRequest.StaticVariable(
+                                    "svCurrentCompany",
+                                    companyName
+                            ),
+                            new TallyRequest.StaticVariable(
+                                    "svFromDate",
+                                    fromPeriod
+                            ),
+                            new TallyRequest.StaticVariable(
+                                    "svToDate",
+                                    toPeriod
+                            )
+                    );
+
+        } else {
+
+            staticVariables =
+                    List.of(
+                            new TallyRequest.StaticVariable(
+                                    "svExportFormat",
+                                    "jsonex"
+                            ),
+                            new TallyRequest.StaticVariable(
+                                    "svCurrentCompany",
+                                    companyName
+                            )
+                    );
+        }
 
         // ---------------------------------------------------------
         // SOURCE: SALES VOUCHERS
@@ -2347,6 +2464,34 @@ public class TallyService {
             );
         }
 
+        boolean acquired;
+
+        try {
+
+            acquired =
+                    tallyGate.tryAcquire(
+                            TALLY_WAIT_TIMEOUT_SECONDS,
+                            TimeUnit.SECONDS
+                    );
+
+        } catch (InterruptedException e) {
+
+            Thread.currentThread().interrupt();
+
+            throw new ResponseStatusException(
+                    HttpStatus.SERVICE_UNAVAILABLE,
+                    "Interrupted while waiting for Tally to become available"
+            );
+        }
+
+        if (!acquired) {
+
+            throw new ResponseStatusException(
+                    HttpStatus.SERVICE_UNAVAILABLE,
+                    "Tally is busy processing other requests. Please retry shortly."
+            );
+        }
+
         AgentRelayService.RelayResponse response;
 
         try {
@@ -2369,6 +2514,10 @@ public class TallyService {
                     HttpStatus.BAD_GATEWAY,
                     "Unable to communicate with Tally Agent"
             );
+
+        } finally {
+
+            tallyGate.release();
         }
 
         if (response == null) {

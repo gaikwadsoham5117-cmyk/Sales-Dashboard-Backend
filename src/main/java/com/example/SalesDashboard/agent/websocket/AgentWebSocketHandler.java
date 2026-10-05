@@ -8,6 +8,7 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.node.ObjectNode;
 
 import lombok.RequiredArgsConstructor;
+import lombok.extern.slf4j.Slf4j;
 
 import org.springframework.stereotype.Component;
 import org.springframework.web.socket.CloseStatus;
@@ -17,9 +18,9 @@ import org.springframework.web.socket.handler.TextWebSocketHandler;
 
 @Component
 @RequiredArgsConstructor
+@Slf4j
 public class AgentWebSocketHandler
         extends TextWebSocketHandler {
-
 
     private final AgentConnectionService agentConnectionService;
 
@@ -27,7 +28,6 @@ public class AgentWebSocketHandler
 
     private final ObjectMapper mapper =
             new ObjectMapper();
-
 
     // ============================================================
     // CONNECTION ESTABLISHED
@@ -39,12 +39,19 @@ public class AgentWebSocketHandler
     ) throws Exception {
 
         String agentId =
-                (String) session
-                        .getAttributes()
-                        .get("agentId");
+                (String)
+                        session
+                                .getAttributes()
+                                .get("agentId");
 
-        if (agentId == null
-                || agentId.isBlank()) {
+        if (
+                agentId == null
+                        || agentId.isBlank()
+        ) {
+
+            log.warn(
+                    "Agent WebSocket connected without agentId"
+            );
 
             session.close(
                     CloseStatus.POLICY_VIOLATION
@@ -53,12 +60,16 @@ public class AgentWebSocketHandler
             return;
         }
 
+        log.info(
+                "TALLY AGENT CONNECTED | agentId={}",
+                agentId
+        );
+
         agentConnectionService.connectAgent(
                 agentId,
                 session
         );
     }
-
 
     // ============================================================
     // MESSAGE
@@ -73,8 +84,10 @@ public class AgentWebSocketHandler
         String payload =
                 message.getPayload();
 
-        if (payload == null
-                || payload.isBlank()) {
+        if (
+                payload == null
+                        || payload.isBlank()
+        ) {
 
             return;
         }
@@ -90,24 +103,26 @@ public class AgentWebSocketHandler
 
         } catch (Exception e) {
 
-            /*
-             * Do not allow malformed JSON to break
-             * the WebSocket connection.
-             */
+            log.warn(
+                    "Invalid JSON received from Tally Agent"
+            );
+
             return;
         }
 
         String agentId =
-                (String) session
-                        .getAttributes()
-                        .get("agentId");
+                (String)
+                        session
+                                .getAttributes()
+                                .get("agentId");
 
         /*
-         * Every valid message proves that the
-         * agent connection is alive.
+         * Every valid message proves that the Agent is alive.
          */
-        if (agentId != null
-                && !agentId.isBlank()) {
+        if (
+                agentId != null
+                        && !agentId.isBlank()
+        ) {
 
             agentConnectionService.touchAgent(
                     agentId
@@ -118,9 +133,17 @@ public class AgentWebSocketHandler
                 node.path("type")
                         .asText("");
 
+        if (type.isBlank()) {
+
+            log.warn(
+                    "Received WebSocket message without type | agentId={}",
+                    agentId
+            );
+
+            return;
+        }
 
         switch (type) {
-
 
             // ====================================================
             // AUTH
@@ -140,8 +163,12 @@ public class AgentWebSocketHandler
                         session,
                         ack
                 );
-            }
 
+                log.info(
+                        "TALLY AGENT AUTH OK | agentId={}",
+                        agentId
+                );
+            }
 
             // ====================================================
             // PING
@@ -163,7 +190,6 @@ public class AgentWebSocketHandler
                 );
             }
 
-
             // ====================================================
             // PONG
             // ====================================================
@@ -171,13 +197,14 @@ public class AgentWebSocketHandler
             case "PONG" -> {
 
                 /*
-                 * Connection is alive.
+                 * Agent heartbeat response.
+                 *
+                 * touchAgent() was already called above.
                  */
             }
 
-
             // ====================================================
-            // LEGACY PROXY RESPONSE
+            // NON-STREAMING PROXY RESPONSE
             // ====================================================
 
             case "PROXY_RESPONSE" -> {
@@ -186,7 +213,6 @@ public class AgentWebSocketHandler
                         node
                 );
             }
-
 
             // ====================================================
             // STREAM START
@@ -199,7 +225,6 @@ public class AgentWebSocketHandler
                 );
             }
 
-
             // ====================================================
             // STREAM CHUNK
             // ====================================================
@@ -210,7 +235,6 @@ public class AgentWebSocketHandler
                         node
                 );
             }
-
 
             // ====================================================
             // STREAM END
@@ -223,23 +247,23 @@ public class AgentWebSocketHandler
                 );
             }
 
-
             // ====================================================
-            // UNKNOWN MESSAGE
+            // UNKNOWN
             // ====================================================
 
             default -> {
 
-                /*
-                 * Ignore unknown message types.
-                 */
+                log.debug(
+                        "Ignoring unknown Agent WebSocket message | agentId={} | type={}",
+                        agentId,
+                        type
+                );
             }
         }
     }
 
-
     // ============================================================
-    // LEGACY PROXY RESPONSE
+    // NORMAL PROXY RESPONSE
     // ============================================================
 
     private void handleProxyResponse(
@@ -250,16 +274,28 @@ public class AgentWebSocketHandler
                 node.path("requestId")
                         .asText("");
 
-        if (requestId.isBlank()) {
+        if (
+                requestId == null
+                        || requestId.isBlank()
+        ) {
+
+            log.warn(
+                    "PROXY_RESPONSE received without requestId"
+            );
+
             return;
         }
+
+        log.debug(
+                "TALLY PROXY RESPONSE COMPLETE | requestId={}",
+                requestId
+        );
 
         pendingRequestRegistry.complete(
                 requestId,
                 node
         );
     }
-
 
     // ============================================================
     // STREAM START
@@ -273,23 +309,13 @@ public class AgentWebSocketHandler
                 node.path("requestId")
                         .asText("");
 
-        if (requestId.isBlank()) {
-            return;
-        }
+        if (
+                requestId == null
+                        || requestId.isBlank()
+        ) {
 
-        boolean ok =
-                node.path("ok")
-                        .asBoolean(false);
-
-        /*
-         * If the Agent says the request failed,
-         * don't start a successful stream.
-         */
-        if (!ok) {
-
-            pendingRequestRegistry.complete(
-                    requestId,
-                    node
+            log.warn(
+                    "PROXY_RESPONSE_START received without requestId"
             );
 
             return;
@@ -299,12 +325,17 @@ public class AgentWebSocketHandler
                 node.path("status")
                         .asInt(200);
 
+        log.info(
+                "TALLY STREAM START | requestId={} | status={}",
+                requestId,
+                status
+        );
+
         pendingRequestRegistry.startStream(
                 requestId,
                 status
         );
     }
-
 
     // ============================================================
     // STREAM CHUNK
@@ -318,15 +349,23 @@ public class AgentWebSocketHandler
                 node.path("requestId")
                         .asText("");
 
-        if (requestId.isBlank()) {
+        if (
+                requestId == null
+                        || requestId.isBlank()
+        ) {
+
             return;
         }
 
         String chunk =
-                node.path("body")
+                node.path("chunk")
                         .asText("");
 
-        if (chunk.isEmpty()) {
+        if (
+                chunk == null
+                        || chunk.isEmpty()
+        ) {
+
             return;
         }
 
@@ -335,7 +374,6 @@ public class AgentWebSocketHandler
                 chunk
         );
     }
-
 
     // ============================================================
     // STREAM END
@@ -349,15 +387,38 @@ public class AgentWebSocketHandler
                 node.path("requestId")
                         .asText("");
 
-        if (requestId.isBlank()) {
+        if (
+                requestId == null
+                        || requestId.isBlank()
+        ) {
+
+            log.warn(
+                    "PROXY_RESPONSE_END received without requestId"
+            );
+
             return;
         }
 
+        log.info(
+                "TALLY STREAM END | requestId={}",
+                requestId
+        );
+
+        /*
+         * This converts all received chunks into the final object:
+         *
+         * {
+         *     ok: true,
+         *     status: 200,
+         *     body: "complete Tally JSON..."
+         * }
+         *
+         * AgentRelayService can then process it normally.
+         */
         pendingRequestRegistry.completeStream(
                 requestId
         );
     }
-
 
     // ============================================================
     // CONNECTION CLOSED
@@ -370,12 +431,21 @@ public class AgentWebSocketHandler
     ) throws Exception {
 
         String agentId =
-                (String) session
-                        .getAttributes()
-                        .get("agentId");
+                (String)
+                        session
+                                .getAttributes()
+                                .get("agentId");
 
-        if (agentId != null
-                && !agentId.isBlank()) {
+        log.info(
+                "TALLY AGENT DISCONNECTED | agentId={} | status={}",
+                agentId,
+                status
+        );
+
+        if (
+                agentId != null
+                        && !agentId.isBlank()
+        ) {
 
             /*
              * Pass the actual closing session.
@@ -387,7 +457,6 @@ public class AgentWebSocketHandler
         }
     }
 
-
     // ============================================================
     // TRANSPORT ERROR
     // ============================================================
@@ -398,20 +467,23 @@ public class AgentWebSocketHandler
             Throwable exception
     ) throws Exception {
 
+        String agentId =
+                (String)
+                        session
+                                .getAttributes()
+                                .get("agentId");
+
+        log.warn(
+                "TALLY AGENT WEBSOCKET TRANSPORT ERROR | agentId={} | error={}",
+                agentId,
+                exception.getMessage()
+        );
+
         if (session.isOpen()) {
 
-            try {
-
-                session.close(
-                        CloseStatus.SERVER_ERROR
-                );
-
-            } catch (Exception ignored) {
-                // Cleanup handled by WebSocket lifecycle.
-            }
+            session.close();
         }
     }
-
 
     // ============================================================
     // SEND JSON
@@ -421,6 +493,14 @@ public class AgentWebSocketHandler
             WebSocketSession session,
             ObjectNode node
     ) {
+
+        if (
+                session == null
+                        || !session.isOpen()
+        ) {
+
+            return;
+        }
 
         try {
 
@@ -434,10 +514,10 @@ public class AgentWebSocketHandler
 
         } catch (Exception e) {
 
-            /*
-             * Connection cleanup will happen
-             * through the WebSocket lifecycle.
-             */
+            log.warn(
+                    "Failed to send WebSocket message to Tally Agent: {}",
+                    e.getMessage()
+            );
         }
     }
 }
