@@ -23,5 +23,5 @@ public interface AgentRepository
     // New organization-based mapping
     List<Agent> findByOrganizationId(String organizationId);
 
-    boolean existsByAgentId(String agentId);
+    boolean existsByOrganizationId(String organizationId);
 }

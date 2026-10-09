@@ -2,6 +2,7 @@ package com.example.SalesDashboard.agent.service;
 
 import com.example.SalesDashboard.agent.dto.CreateAgentRequest;
 import com.example.SalesDashboard.agent.entity.Agent;
+import com.example.SalesDashboard.agent.exception.AgentAlreadyExistsException;
 import com.example.SalesDashboard.agent.exception.AgentNotFoundException;
 import com.example.SalesDashboard.agent.exception.AgentOrganizationNotAssignedException;
 import com.example.SalesDashboard.agent.exception.AgentUserNotFoundException;
@@ -11,7 +12,9 @@ import com.example.SalesDashboard.user.repository.UserRepository;
 
 import lombok.RequiredArgsConstructor;
 
+import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Service;
+import org.springframework.web.server.ResponseStatusException;
 
 import java.security.SecureRandom;
 import java.time.LocalDateTime;
@@ -133,42 +136,34 @@ public class AgentService {
             CreateAgentRequest request
     ) {
 
+        // Check whether this organization already has an agent
+        if (agentRepository.existsByOrganizationId(organizationId)) {
+            throw new AgentAlreadyExistsException(
+                    "A Tally Agent already exists for this organization."
+            );
+        }
+
         String agentId =
                 "agent-" +
                         UUID.randomUUID()
                                 .toString()
                                 .substring(0, 12);
 
-        String agentKey =
-                generateAgentKey();
+        String agentKey = generateAgentKey();
 
-        Agent agent =
-                Agent.builder()
-
-                        .agentId(agentId)
-
-                        // New organization mapping
-                        .organizationId(
-                                organizationId
-                        )
-
-                        .agentKey(agentKey)
-
-                        .agentName(
-                                request.getAgentName() != null
-                                        ? request.getAgentName()
-                                        : "Tally Agent"
-                        )
-
-                        .status("OFFLINE")
-
-                        .createdAt(
-                                LocalDateTime.now()
-                        )
-
-                        .lastSeen(null)
-
-                        .build();
+        Agent agent = Agent.builder()
+                .agentId(agentId)
+                .organizationId(organizationId)
+                .agentKey(agentKey)
+                .agentName(
+                        request.getAgentName() != null
+                                ? request.getAgentName()
+                                : "Tally Agent"
+                )
+                .status("OFFLINE")
+                .createdAt(LocalDateTime.now())
+                .lastSeen(null)
+                .build();
 
         return agentRepository.save(agent);
     }

@@ -361,6 +361,13 @@ public class GlobalExceptionHandler {
         return ResponseEntity.status(HttpStatus.BAD_GATEWAY).body(errorResponse);
     }
 
+    @ExceptionHandler(AgentAlreadyExistsException.class)
+    public ResponseEntity<ErrorResponse> handleAgentAlreadyExists(AgentAlreadyExistsException ex) {
+        log.warn("Agent is already created for this orgnization: {}", ex.getMessage());
+        ErrorResponse errorResponse = new ErrorResponse(HttpStatus.BAD_GATEWAY.value(), ex.getMessage());
+        return  ResponseEntity.status(HttpStatus.BAD_GATEWAY).body(errorResponse);
+    }
+
     // =========================================================
     // ORGANIZATION
     // =========================================================
