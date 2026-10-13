@@ -11,6 +11,8 @@ import com.example.SalesDashboard.tally.Sales.dto.SalesVoucherItemDTO;
 import com.example.SalesDashboard.tally.Sales.dto.SalesVoucherLedgerDTO;
 import com.example.SalesDashboard.tally.Sales.dto.TallyRequest;
 
+import com.fasterxml.jackson.core.JsonParser;
+import com.fasterxml.jackson.core.JsonToken;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 
@@ -276,88 +278,138 @@ public class TallyService {
             );
         }
 
-        JsonNode root;
+        List<SalesVoucherDTO> vouchers = new ArrayList<>();
+        boolean parsedViaStream = false;
 
-        try {
-            root = objectMapper.readTree(body);
-        } catch (Exception e) {
-            throw new ResponseStatusException(
-                    HttpStatus.BAD_GATEWAY,
-                    "Tally returned an invalid response"
-            );
-        }
+        try (JsonParser parser = objectMapper.createParser(body)) {
+            String status = null;
+            boolean inData = false;
 
-        String status =
-                root.path("status")
-                        .asText("");
+            while (parser.nextToken() != null) {
+                String fieldName = parser.currentName();
 
-        if (!"1".equals(status)) {
-            throw new ResponseStatusException(
-                    HttpStatus.BAD_GATEWAY,
-                    "Tally reported an error for company '"
-                            + companyName
-                            + "'"
-            );
-        }
+                if ("status".equals(fieldName) && parser.currentToken() == JsonToken.VALUE_STRING) {
+                    status = parser.getText();
+                } else if ("data".equals(fieldName) && parser.currentToken() == JsonToken.START_OBJECT) {
+                    inData = true;
+                } else if (inData && "collection".equals(fieldName) && parser.currentToken() == JsonToken.START_ARRAY) {
+                    // Check status before parsing vouchers
+                    if (status != null && !"1".equals(status)) {
+                        throw new ResponseStatusException(
+                                HttpStatus.BAD_GATEWAY,
+                                "Tally reported an error for company '" + companyName + "'"
+                        );
+                    }
 
-        JsonNode collection =
-                root.path("data")
-                        .path("collection");
+                    int voucherCount = 0;
+                    while (parser.nextToken() != JsonToken.END_ARRAY) {
+                        JsonNode voucherNode = parser.readValueAsTree();
+                        voucherCount++;
+                        try {
+                            SalesVoucherDTO voucher = mapVoucher(voucherNode);
+                            if (voucher != null) {
+                                vouchers.add(voucher);
+                            }
+                        } catch (Exception e) {
+                            log.warn(
+                                    "FAILED TO MAP TALLY VOUCHER | company={} | date={} | voucherNumber={} | error={}",
+                                    companyName,
+                                    extractValue(voucherNode.path("date")),
+                                    extractValue(voucherNode.path("vouchernumber")),
+                                    e.getMessage(),
+                                    e
+                            );
+                        }
+                    }
 
-        List<SalesVoucherDTO> vouchers =
-                new ArrayList<>();
+                    log.info(
+                            "TALLY DATE RANGE RESPONSE (STREAM PARSED) | company={} | from={} | to={} | vouchersFromTally={}",
+                            companyName,
+                            from,
+                            to,
+                            voucherCount
+                    );
 
-        if (!collection.isArray()) {
+                    if (voucherCount > SUSPICIOUS_RESULT_SIZE) {
+                        log.warn(
+                                "Tally returned {} vouchers for date range {} to {} for company {}. Verify Tally date filter.",
+                                voucherCount,
+                                from,
+                                to,
+                                companyName
+                        );
+                    }
+
+                    parsedViaStream = true;
+                    break;
+                }
+            }
+        } catch (ResponseStatusException e) {
+            throw e;
+        } catch (Exception streamEx) {
             log.warn(
-                    "TALLY DATE RANGE RESPONSE HAS NO ARRAY | company={} | from={} | to={} | response={}",
+                    "Streaming parser encountered issue for company {} (falling back to readTree): {}",
+                    companyName,
+                    streamEx.getMessage()
+            );
+        }
+
+        if (!parsedViaStream) {
+            // Safe fallback to readTree
+            JsonNode root;
+            try {
+                root = objectMapper.readTree(body);
+            } catch (Exception e) {
+                throw new ResponseStatusException(
+                        HttpStatus.BAD_GATEWAY,
+                        "Tally returned an invalid response"
+                );
+            }
+
+            String status = root.path("status").asText("");
+            if (!"1".equals(status)) {
+                throw new ResponseStatusException(
+                        HttpStatus.BAD_GATEWAY,
+                        "Tally reported an error for company '" + companyName + "'"
+                );
+            }
+
+            JsonNode collection = root.path("data").path("collection");
+            if (!collection.isArray()) {
+                log.warn(
+                        "TALLY DATE RANGE RESPONSE HAS NO ARRAY | company={} | from={} | to={} | response={}",
+                        companyName,
+                        from,
+                        to,
+                        root
+                );
+                return vouchers;
+            }
+
+            log.info(
+                    "TALLY DATE RANGE RESPONSE (TREE PARSED) | company={} | from={} | to={} | vouchersFromTally={}",
                     companyName,
                     from,
                     to,
-                    root
+                    collection.size()
             );
-            return vouchers;
-        }
 
-        log.info(
-                "TALLY DATE RANGE RESPONSE | company={} | from={} | to={} | vouchersFromTally={}",
-                companyName,
-                from,
-                to,
-                collection.size()
-        );
-
-        // This is only a safety canary. We deliberately do NOT
-        // filter the response in Java because that would reintroduce
-        // the fetch-everything-then-filter pattern.
-        if (collection.size() > SUSPICIOUS_RESULT_SIZE) {
-            log.warn(
-                    "Tally returned {} vouchers for date range {} to {} "
-                            + "for company {}. Verify the Tally-side date "
-                            + "filter is being applied.",
-                    collection.size(),
-                    from,
-                    to,
-                    companyName
-            );
-        }
-
-        for (JsonNode voucherNode : collection) {
-            try {
-                SalesVoucherDTO voucher =
-                        mapVoucher(voucherNode);
-
-                if (voucher != null) {
-                    vouchers.add(voucher);
+            for (JsonNode voucherNode : collection) {
+                try {
+                    SalesVoucherDTO voucher = mapVoucher(voucherNode);
+                    if (voucher != null) {
+                        vouchers.add(voucher);
+                    }
+                } catch (Exception e) {
+                    log.warn(
+                            "FAILED TO MAP TALLY VOUCHER | company={} | date={} | voucherNumber={} | error={}",
+                            companyName,
+                            extractValue(voucherNode.path("date")),
+                            extractValue(voucherNode.path("vouchernumber")),
+                            e.getMessage(),
+                            e
+                    );
                 }
-            } catch (Exception e) {
-                log.warn(
-                        "FAILED TO MAP TALLY VOUCHER | company={} | date={} | voucherNumber={} | error={}",
-                        companyName,
-                        extractValue(voucherNode.path("date")),
-                        extractValue(voucherNode.path("vouchernumber")),
-                        e.getMessage(),
-                        e
-                );
             }
         }
 
