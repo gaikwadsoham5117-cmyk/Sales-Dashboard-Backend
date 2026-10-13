@@ -3,6 +3,8 @@ package com.example.SalesDashboard.agent.service;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
 
+import java.time.Duration;
+import java.time.Instant;
 import java.util.concurrent.ArrayBlockingQueue;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ConcurrentHashMap;
@@ -52,6 +54,19 @@ public class AgentRequestQueueService {
     private final ConcurrentHashMap<String, ThreadPoolExecutor> agentExecutors =
             new ConcurrentHashMap<>();
 
+    private final long queueWaitSeconds;
+
+    @org.springframework.beans.factory.annotation.Autowired
+    public AgentRequestQueueService(
+            @org.springframework.beans.factory.annotation.Value("${tally.timeouts.queue-wait-seconds:60}") long queueWaitSeconds
+    ) {
+        this.queueWaitSeconds = Math.max(1, queueWaitSeconds);
+    }
+
+    public AgentRequestQueueService() {
+        this(60);
+    }
+
     /**
      * Submit a request to the queue of a specific Agent.
      */
@@ -92,10 +107,29 @@ public class AgentRequestQueueService {
                 queueSizeBeforeSubmit
         );
 
+        Instant submittedAt = Instant.now();
+
         try {
 
             return CompletableFuture.supplyAsync(
                     () -> {
+
+                        Duration waitDuration = Duration.between(submittedAt, Instant.now());
+                        if (waitDuration.getSeconds() > queueWaitSeconds) {
+                            log.warn(
+                                    "TALLY QUEUE TIMEOUT | agentId={} | waited={}s | limit={}s",
+                                    agentId,
+                                    waitDuration.toSeconds(),
+                                    queueWaitSeconds
+                            );
+                            throw new com.example.SalesDashboard.agent.exception.AgentQueueTimeoutException(
+                                    "Request timed out after waiting "
+                                            + waitDuration.toSeconds()
+                                            + " seconds in Tally Agent queue (limit: "
+                                            + queueWaitSeconds
+                                            + "s)"
+                            );
+                        }
 
                         log.info(
                                 "TALLY QUEUE START | agentId={} | description={} | active={} | waiting={}",

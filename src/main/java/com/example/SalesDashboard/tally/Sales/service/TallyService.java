@@ -11,32 +11,38 @@ import com.example.SalesDashboard.tally.Sales.dto.SalesVoucherItemDTO;
 import com.example.SalesDashboard.tally.Sales.dto.SalesVoucherLedgerDTO;
 import com.example.SalesDashboard.tally.Sales.dto.TallyRequest;
 
+import com.fasterxml.jackson.core.JsonParser;
+import com.fasterxml.jackson.core.JsonToken;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 
-import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.stereotype.Service;
 import org.springframework.web.server.ResponseStatusException;
 
+import java.io.InputStream;
 import java.math.BigDecimal;
+import java.time.Duration;
+import java.time.Instant;
 import java.time.LocalDate;
 import java.time.format.DateTimeFormatter;
 import java.time.temporal.ChronoUnit;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
+import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.Semaphore;
 import java.util.concurrent.TimeUnit;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
 @Service
-@RequiredArgsConstructor
 @Slf4j
 public class TallyService {
 
@@ -47,51 +53,57 @@ public class TallyService {
     // CONFIGURATION
     // =========================================================
 
-    @Value("${tally.company-name:}")
-    private String tallyCompanyName;
+    private final String tallyCompanyName;
+    private final long globalWaitTimeoutSeconds;
+    private final long itemParentCacheTtlMinutes;
 
     // =========================================================
     // DATE-RANGE SAFETY LIMIT
     // =========================================================
-    // Keep one backend request limited to roughly one month.
-    // This protects the Java service from accidentally receiving
-    // a very large Tally response. The actual filtering is still
-    // performed inside Tally by the date formula below.
-    // =========================================================
-
     private static final long MAX_DATE_RANGE_DAYS = 31;
-
     private static final int SUSPICIOUS_RESULT_SIZE = 20_000;
 
     // =========================================================
-    // TALLY SERIALIZATION GATE
+    // BOUNDED GLOBAL TALLY CONCURRENCY GATE
     // =========================================================
-    //
-    // Tally's HTTP/XML gateway is built around ONE interactive
-    // desktop session: "current company" and "current period"
-    // are global state inside Tally itself, not scoped per HTTP
-    // request. When two exports hit it at the same moment, one
-    // request's svCurrentCompany / date context can be stepped on
-    // mid-export by the other - this is what was producing
-    // vouchersFromTally=0 for date ranges that genuinely have
-    // data, whenever several months were requested concurrently
-    // (e.g. a 12-month report firing all 12 calls in parallel).
-    //
-    // A single-permit, fair Semaphore ensures only one export is
-    // ever in flight to Tally at a time; every other caller - no
-    // matter how many hit this service concurrently - simply
-    // queues and is served in the order it arrived. "Fair" mode
-    // (true) guarantees FIFO ordering rather than letting threads
-    // jump the queue.
-    //
-    // TALLY_WAIT_TIMEOUT_SECONDS bounds how long a caller will
-    // wait for its turn before giving up with a clear 503, rather
-    // than queuing forever if Tally itself is stuck or very slow.
+    private final Semaphore tallyGate;
+
     // =========================================================
+    // ITEM PARENT MAPPING CACHE PER COMPANY
+    // =========================================================
+    private static class CompanyParentCache {
+        private final ConcurrentHashMap<String, String> mappings =
+                new ConcurrentHashMap<>();
+        private volatile Instant lastUpdated = Instant.EPOCH;
 
-    private final Semaphore tallyGate = new Semaphore(1, true);
+        boolean isFresh(Duration ttl) {
+            return Duration.between(lastUpdated, Instant.now()).compareTo(ttl) < 0;
+        }
+    }
 
-    private static final long TALLY_WAIT_TIMEOUT_SECONDS = 120;
+    private final ConcurrentHashMap<String, CompanyParentCache> companyParentCaches =
+            new ConcurrentHashMap<>();
+
+    @Autowired
+    public TallyService(
+            ObjectMapper objectMapper,
+            AgentRelayService agentRelayService,
+            @Value("${tally.company-name:}") String tallyCompanyName,
+            @Value("${tally.max-concurrent-requests:4}") int maxConcurrentRequests,
+            @Value("${tally.global-wait-timeout-seconds:120}") long globalWaitTimeoutSeconds,
+            @Value("${tally.item-parent-cache-ttl-minutes:60}") long itemParentCacheTtlMinutes
+    ) {
+        this.objectMapper = objectMapper;
+        this.agentRelayService = agentRelayService;
+        this.tallyCompanyName = tallyCompanyName;
+        this.globalWaitTimeoutSeconds = Math.max(1, globalWaitTimeoutSeconds);
+        this.itemParentCacheTtlMinutes = Math.max(1, itemParentCacheTtlMinutes);
+        this.tallyGate = new Semaphore(Math.max(1, maxConcurrentRequests), true);
+    }
+
+    public TallyService(ObjectMapper objectMapper, AgentRelayService agentRelayService) {
+        this(objectMapper, agentRelayService, "", 4, 120, 60);
+    }
 
     // =========================================================
     // DEFAULT COMPANY
@@ -126,88 +138,44 @@ public class TallyService {
         TallyRequest request =
                 buildAllSalesVouchersRequest(companyName);
 
-        ResponseEntity<String> response =
-                callTally(
+        Map<String, String> headers =
+                buildCollectionHeaders("TSPLAllSalesVouchers");
+
+        try (AgentRelayService.RelayResponse response =
+                     relayToAgent(
+                             userId,
+                             headers,
+                             request
+                     )) {
+
+            try (InputStream stream = response.openStream()) {
+                List<SalesVoucherDTO> vouchers =
+                        parseSalesVouchersStream(
+                                stream,
+                                companyName,
+                                null,
+                                null
+                        );
+
+                populateItemParentNames(
+                        vouchers,
                         userId,
-                        request
+                        companyName,
+                        null,
+                        null
                 );
 
-        String body = response.getBody();
+                return vouchers;
 
-        if (body == null || body.isBlank()) {
-
-            throw new ResponseStatusException(
-                    HttpStatus.BAD_GATEWAY,
-                    "Tally returned an empty response"
-            );
-        }
-
-        JsonNode root;
-
-        try {
-
-            root = objectMapper.readTree(body);
-
-        } catch (Exception e) {
-
-            throw new ResponseStatusException(
-                    HttpStatus.BAD_GATEWAY,
-                    "Tally returned an invalid response"
-            );
-        }
-
-        String status =
-                root.path("status")
-                        .asText("");
-
-        if (!"1".equals(status)) {
-
-            throw new ResponseStatusException(
-                    HttpStatus.BAD_GATEWAY,
-                    "Tally reported an error for company '"
-                            + companyName
-                            + "'"
-            );
-        }
-
-        JsonNode collection =
-                root.path("data")
-                        .path("collection");
-
-        List<SalesVoucherDTO> vouchers =
-                new ArrayList<>();
-
-        if (!collection.isArray()) {
-            return vouchers;
-        }
-
-        for (JsonNode voucherNode : collection) {
-
-            try {
-
-                SalesVoucherDTO voucher =
-                        mapVoucher(voucherNode);
-
-                if (voucher != null) {
-                    vouchers.add(voucher);
-                }
-
-            } catch (Exception ignored) {
-
-                // One malformed voucher should not
-                // fail the complete request.
+            } catch (ResponseStatusException e) {
+                throw e;
+            } catch (Exception e) {
+                throw new ResponseStatusException(
+                        HttpStatus.BAD_GATEWAY,
+                        "Failed to parse Tally vouchers response: " + e.getMessage()
+                );
             }
         }
-
-        populateItemParentNames(
-                vouchers,
-                userId,
-                companyName,
-                null,
-                null
-        );
-
-        return vouchers;
     }
 
     // =========================================================
@@ -261,113 +229,130 @@ public class TallyService {
                         to
                 );
 
-        ResponseEntity<String> response =
-                callTally(
+        Map<String, String> headers =
+                buildCollectionHeaders("TSPLAllSalesVouchers");
+
+        try (AgentRelayService.RelayResponse response =
+                     relayToAgent(
+                             userId,
+                             headers,
+                             request
+                     )) {
+
+            try (InputStream stream = response.openStream()) {
+                List<SalesVoucherDTO> vouchers =
+                        parseSalesVouchersStream(
+                                stream,
+                                companyName,
+                                from,
+                                to
+                        );
+
+                populateItemParentNames(
+                        vouchers,
                         userId,
-                        request
+                        companyName,
+                        from,
+                        to
                 );
 
-        String body = response.getBody();
+                return vouchers;
 
-        if (body == null || body.isBlank()) {
-            throw new ResponseStatusException(
-                    HttpStatus.BAD_GATEWAY,
-                    "Tally returned an empty response"
-            );
-        }
-
-        JsonNode root;
-
-        try {
-            root = objectMapper.readTree(body);
-        } catch (Exception e) {
-            throw new ResponseStatusException(
-                    HttpStatus.BAD_GATEWAY,
-                    "Tally returned an invalid response"
-            );
-        }
-
-        String status =
-                root.path("status")
-                        .asText("");
-
-        if (!"1".equals(status)) {
-            throw new ResponseStatusException(
-                    HttpStatus.BAD_GATEWAY,
-                    "Tally reported an error for company '"
-                            + companyName
-                            + "'"
-            );
-        }
-
-        JsonNode collection =
-                root.path("data")
-                        .path("collection");
-
-        List<SalesVoucherDTO> vouchers =
-                new ArrayList<>();
-
-        if (!collection.isArray()) {
-            log.warn(
-                    "TALLY DATE RANGE RESPONSE HAS NO ARRAY | company={} | from={} | to={} | response={}",
-                    companyName,
-                    from,
-                    to,
-                    root
-            );
-            return vouchers;
-        }
-
-        log.info(
-                "TALLY DATE RANGE RESPONSE | company={} | from={} | to={} | vouchersFromTally={}",
-                companyName,
-                from,
-                to,
-                collection.size()
-        );
-
-        // This is only a safety canary. We deliberately do NOT
-        // filter the response in Java because that would reintroduce
-        // the fetch-everything-then-filter pattern.
-        if (collection.size() > SUSPICIOUS_RESULT_SIZE) {
-            log.warn(
-                    "Tally returned {} vouchers for date range {} to {} "
-                            + "for company {}. Verify the Tally-side date "
-                            + "filter is being applied.",
-                    collection.size(),
-                    from,
-                    to,
-                    companyName
-            );
-        }
-
-        for (JsonNode voucherNode : collection) {
-            try {
-                SalesVoucherDTO voucher =
-                        mapVoucher(voucherNode);
-
-                if (voucher != null) {
-                    vouchers.add(voucher);
-                }
+            } catch (ResponseStatusException e) {
+                throw e;
             } catch (Exception e) {
-                log.warn(
-                        "FAILED TO MAP TALLY VOUCHER | company={} | date={} | voucherNumber={} | error={}",
-                        companyName,
-                        extractValue(voucherNode.path("date")),
-                        extractValue(voucherNode.path("vouchernumber")),
-                        e.getMessage(),
-                        e
+                throw new ResponseStatusException(
+                        HttpStatus.BAD_GATEWAY,
+                        "Failed to parse Tally date-range vouchers response: " + e.getMessage()
                 );
             }
         }
+    }
 
-        populateItemParentNames(
-                vouchers,
-                userId,
-                companyName,
-                from,
-                to
-        );
+    private List<SalesVoucherDTO> parseSalesVouchersStream(
+            InputStream inputStream,
+            String companyName,
+            LocalDate from,
+            LocalDate to
+    ) {
+        List<SalesVoucherDTO> vouchers = new ArrayList<>();
+        String tallyStatus = null;
+
+        try (JsonParser parser = objectMapper.getFactory().createParser(inputStream)) {
+            if (parser.nextToken() != JsonToken.START_OBJECT) {
+                throw new ResponseStatusException(
+                        HttpStatus.BAD_GATEWAY,
+                        "Tally returned an invalid response"
+                );
+            }
+
+            while (parser.nextToken() != JsonToken.END_OBJECT && parser.currentToken() != null) {
+                String fieldName = parser.currentName();
+                parser.nextToken();
+
+                if ("status".equalsIgnoreCase(fieldName)) {
+                    tallyStatus = parser.getText();
+                } else if ("data".equalsIgnoreCase(fieldName) && parser.currentToken() == JsonToken.START_OBJECT) {
+                    while (parser.nextToken() != JsonToken.END_OBJECT && parser.currentToken() != null) {
+                        String dataField = parser.currentName();
+                        parser.nextToken();
+
+                        if ("collection".equalsIgnoreCase(dataField) && parser.currentToken() == JsonToken.START_ARRAY) {
+                            while (parser.nextToken() != JsonToken.END_ARRAY && parser.currentToken() != null) {
+                                try {
+                                    JsonNode voucherNode = objectMapper.readTree(parser);
+                                    if (voucherNode != null && !voucherNode.isNull()) {
+                                        SalesVoucherDTO voucher = mapVoucher(voucherNode);
+                                        if (voucher != null) {
+                                            vouchers.add(voucher);
+                                        }
+                                    }
+                                } catch (Exception e) {
+                                    log.warn("FAILED TO MAP TALLY VOUCHER | company={} | error={}",
+                                            companyName, e.getMessage());
+                                }
+                            }
+                        } else {
+                            parser.skipChildren();
+                        }
+                    }
+                } else {
+                    parser.skipChildren();
+                }
+            }
+        } catch (ResponseStatusException e) {
+            throw e;
+        } catch (Exception e) {
+            throw new ResponseStatusException(
+                    HttpStatus.BAD_GATEWAY,
+                    "Failed to parse Tally response: " + e.getMessage()
+            );
+        }
+
+        if (!"1".equals(tallyStatus)) {
+            throw new ResponseStatusException(
+                    HttpStatus.BAD_GATEWAY,
+                    "Tally reported an error for company '" + companyName + "'"
+            );
+        }
+
+        if (from != null && to != null) {
+            log.info(
+                    "TALLY DATE RANGE RESPONSE | company={} | from={} | to={} | vouchersFromTally={}",
+                    companyName,
+                    from,
+                    to,
+                    vouchers.size()
+            );
+        }
+
+        if (vouchers.size() > SUSPICIOUS_RESULT_SIZE) {
+            log.warn(
+                    "Tally returned {} vouchers for company {}. Verify the Tally-side date filter is being applied.",
+                    vouchers.size(),
+                    companyName
+            );
+        }
 
         return vouchers;
     }
@@ -582,93 +567,63 @@ public class TallyService {
             return;
         }
 
-        boolean needsParentLookup = false;
-
+        // Collect all items that actually need parent lookup
+        Set<String> neededItemKeys = new java.util.HashSet<>();
         for (SalesVoucherDTO voucher : vouchers) {
-
-            if (voucher == null || voucher.getItems() == null) {
-                continue;
-            }
-
+            if (voucher == null || voucher.getItems() == null) continue;
             for (SalesVoucherItemDTO item : voucher.getItems()) {
-
-                if (item == null) {
-                    continue;
-                }
-
-                String existingParent =
-                        cleanTallyText(item.getItemParentName());
-
-                String stockItemName =
-                        cleanTallyText(item.getStockItemName());
-
+                if (item == null) continue;
+                String existingParent = cleanTallyText(item.getItemParentName());
+                String stockItemName = cleanTallyText(item.getStockItemName());
                 if ((existingParent == null || existingParent.isBlank())
-                        && stockItemName != null
-                        && !stockItemName.isBlank()) {
+                        && stockItemName != null && !stockItemName.isBlank()) {
+                    neededItemKeys.add(normalizeMasterKey(stockItemName));
+                }
+            }
+        }
 
-                    needsParentLookup = true;
+        if (neededItemKeys.isEmpty()) {
+            return; // 0 auxiliary calls needed!
+        }
+
+        String compKey = companyName != null ? companyName.trim() : "default";
+        Duration ttl = Duration.ofMinutes(itemParentCacheTtlMinutes);
+        CompanyParentCache cache = companyParentCaches.computeIfAbsent(
+                compKey,
+                k -> new CompanyParentCache()
+        );
+
+        // Check if all needed keys are in cache and cache is fresh
+        boolean allCached = cache.isFresh(ttl);
+        if (allCached) {
+            for (String key : neededItemKeys) {
+                if (!cache.mappings.containsKey(key)) {
+                    allCached = false;
                     break;
                 }
             }
+        }
 
-            if (needsParentLookup) {
-                break;
+        if (!allCached) {
+            // Need to fetch from Tally
+            Map<String, String> fetched = fetchStockItemParentMap(userId, companyName, from, to);
+            if (!fetched.isEmpty()) {
+                cache.mappings.putAll(fetched);
+                cache.lastUpdated = Instant.now();
             }
-        }
-
-        if (!needsParentLookup) {
-            return;
-        }
-
-        Map<String, String> stockItemParentMap =
-                fetchStockItemParentMap(
-                        userId,
-                        companyName,
-                        from,
-                        to
-                );
-
-        if (stockItemParentMap.isEmpty()) {
-            log.warn(
-                    "No inventory Stock Item -> Parent mappings returned by Tally for company {}",
-                    companyName
-            );
-            return;
         }
 
         int updatedCount = 0;
-
         for (SalesVoucherDTO voucher : vouchers) {
-
-            if (voucher == null || voucher.getItems() == null) {
-                continue;
-            }
-
+            if (voucher == null || voucher.getItems() == null) continue;
             for (SalesVoucherItemDTO item : voucher.getItems()) {
+                if (item == null) continue;
+                String existingParent = cleanTallyText(item.getItemParentName());
+                if (existingParent != null && !existingParent.isBlank()) continue;
+                String stockItemName = cleanTallyText(item.getStockItemName());
+                if (stockItemName == null || stockItemName.isBlank()) continue;
 
-                if (item == null) {
-                    continue;
-                }
-
-                String existingParent =
-                        cleanTallyText(item.getItemParentName());
-
-                if (existingParent != null && !existingParent.isBlank()) {
-                    continue;
-                }
-
-                String stockItemName =
-                        cleanTallyText(item.getStockItemName());
-
-                if (stockItemName == null || stockItemName.isBlank()) {
-                    continue;
-                }
-
-                String parent =
-                        stockItemParentMap.get(
-                                normalizeMasterKey(stockItemName)
-                        );
-
+                String parent = cache.mappings.get(normalizeMasterKey(stockItemName));
                 if (parent != null && !parent.isBlank()) {
                     item.setItemParentName(parent);
                     updatedCount++;
@@ -677,9 +632,10 @@ public class TallyService {
         }
 
         log.info(
-                "Resolved item parent names for {} inventory items in company {}",
+                "Resolved item parent names for {} inventory items in company {} (allCached: {})",
                 updatedCount,
-                companyName
+                companyName,
+                allCached
         );
     }
 
@@ -701,118 +657,93 @@ public class TallyService {
                         to
                 );
 
-        Map<String, String> result =
-                new java.util.HashMap<>();
+        Map<String, String> headers =
+                buildCollectionHeaders("TSPLStockItemParents");
 
-        ResponseEntity<String> response =
-                callTallyCollection(
-                        userId,
-                        request,
-                        "TSPLStockItemParents"
+        try (AgentRelayService.RelayResponse response =
+                     relayToAgent(userId, headers, request)) {
+
+            try (InputStream stream = response.openStream()) {
+                return parseStockItemParentsStream(stream, companyName);
+            } catch (ResponseStatusException e) {
+                throw e;
+            } catch (Exception e) {
+                throw new ResponseStatusException(
+                        HttpStatus.BAD_GATEWAY,
+                        "Failed to parse Stock Item parents response: " + e.getMessage()
                 );
-
-        String body = response.getBody();
-
-        if (body == null || body.isBlank()) {
-            throw new ResponseStatusException(
-                    HttpStatus.BAD_GATEWAY,
-                    "Tally returned an empty Stock Item parent response"
-            );
+            }
         }
+    }
 
-        JsonNode root;
+    private Map<String, String> parseStockItemParentsStream(
+            InputStream inputStream,
+            String companyName
+    ) {
+        Map<String, String> result = new java.util.HashMap<>();
+        String tallyStatus = null;
 
-        try {
-            root = objectMapper.readTree(body);
+        try (JsonParser parser = objectMapper.getFactory().createParser(inputStream)) {
+            if (parser.nextToken() != JsonToken.START_OBJECT) {
+                throw new ResponseStatusException(
+                        HttpStatus.BAD_GATEWAY,
+                        "Tally returned an invalid Stock Item parent response"
+                );
+            }
+
+            while (parser.nextToken() != JsonToken.END_OBJECT && parser.currentToken() != null) {
+                String fieldName = parser.currentName();
+                parser.nextToken();
+
+                if ("status".equalsIgnoreCase(fieldName)) {
+                    tallyStatus = parser.getText();
+                } else if ("data".equalsIgnoreCase(fieldName) && parser.currentToken() == JsonToken.START_OBJECT) {
+                    while (parser.nextToken() != JsonToken.END_OBJECT && parser.currentToken() != null) {
+                        String dataField = parser.currentName();
+                        parser.nextToken();
+
+                        if ("collection".equalsIgnoreCase(dataField) && parser.currentToken() == JsonToken.START_ARRAY) {
+                            while (parser.nextToken() != JsonToken.END_ARRAY && parser.currentToken() != null) {
+                                try {
+                                    JsonNode itemNode = objectMapper.readTree(parser);
+                                    if (itemNode != null && !itemNode.isNull()) {
+                                        String name = cleanTallyText(
+                                                extractFirstValue(itemNode, "stockitemname", "name", "itemname")
+                                        );
+                                        String parent = cleanTallyText(
+                                                extractFirstValue(itemNode, "itemparentname", "stockgroup", "stockgroupname", "parent")
+                                        );
+                                        if (name != null && !name.isBlank() && parent != null && !parent.isBlank()) {
+                                            result.put(normalizeMasterKey(name), parent);
+                                        }
+                                    }
+                                } catch (Exception ignored) {}
+                            }
+                        } else {
+                            parser.skipChildren();
+                        }
+                    }
+                } else {
+                    parser.skipChildren();
+                }
+            }
+        } catch (ResponseStatusException e) {
+            throw e;
         } catch (Exception e) {
             throw new ResponseStatusException(
                     HttpStatus.BAD_GATEWAY,
-                    "Tally returned an invalid Stock Item parent response"
+                    "Failed to parse Stock Item parents response: " + e.getMessage()
             );
         }
 
-        String status =
-                root.path("status").asText("");
-
-        if (!"1".equals(status)) {
-            log.warn(
-                    "Stock Item parent Tally response failed for company {}: {}",
-                    companyName,
-                    root
-            );
-
+        if (!"1".equals(tallyStatus)) {
             throw new ResponseStatusException(
                     HttpStatus.BAD_GATEWAY,
-                    "Tally reported an error while fetching Stock Item parents for company '"
-                            + companyName
-                            + "'"
+                    "Tally reported an error while fetching Stock Item parents for company '" + companyName + "'"
             );
         }
 
-        JsonNode collection =
-                root.path("data").path("collection");
-
-        if (!collection.isArray()) {
-            log.warn(
-                    "Stock Item parent response has no collection for company {}. Raw response: {}",
-                    companyName,
-                    root
-            );
-            return result;
-        }
-
-        for (JsonNode itemNode : collection) {
-
-            if (itemNode == null || itemNode.isNull()) {
-                continue;
-            }
-
-            String name =
-                    cleanTallyText(
-                            extractFirstValue(
-                                    itemNode,
-                                    "stockitemname",
-                                    "name",
-                                    "itemname"
-                            )
-                    );
-
-            String parent =
-                    cleanTallyText(
-                            extractFirstValue(
-                                    itemNode,
-                                    "itemparentname",
-                                    "stockgroup",
-                                    "stockgroupname",
-                                    "parent"
-                            )
-                    );
-
-            if (name == null || name.isBlank()) {
-                continue;
-            }
-
-            if (parent != null && !parent.isBlank()) {
-                result.put(
-                        normalizeMasterKey(name),
-                        parent
-                );
-            }
-        }
-
-        log.info(
-                "Tally returned {} item-parent mappings for company {}",
-                result.size(),
-                companyName
-        );
-
-        if (result.isEmpty()) {
-            log.warn(
-                    "Tally returned zero item-parent mappings. Raw collection sample: {}",
-                    collection.size() > 0 ? collection.get(0) : "<empty>"
-            );
-        }
-
+        log.info("Tally returned {} item-parent mappings for company {}", result.size(), companyName);
         return result;
     }
 
@@ -2390,6 +2321,16 @@ public class TallyService {
     //
     // =========================================================
 
+    private Map<String, String> buildCollectionHeaders(String collectionId) {
+        return Map.of(
+                "Content-Type", "application/json",
+                "version", "1",
+                "tallyrequest", "export",
+                "type", "collection",
+                "id", collectionId
+        );
+    }
+
     private ResponseEntity<String> callTally(
             String userId,
             TallyRequest requestBody
@@ -2413,35 +2354,26 @@ public class TallyService {
     ) {
 
         Map<String, String> headers =
-                Map.of(
-                        "Content-Type",
-                        "application/json",
+                buildCollectionHeaders(collectionId);
 
-                        "version",
-                        "1",
+        try (AgentRelayService.RelayResponse response =
+                     relayToAgent(
+                             userId,
+                             headers,
+                             requestBody
+                     )) {
 
-                        "tallyrequest",
-                        "export",
-
-                        "type",
-                        "collection",
-
-                        "id",
-                        collectionId
-                );
-
-        return relayToAgent(
-                userId,
-                headers,
-                requestBody
-        );
+            return ResponseEntity
+                    .status(response.status())
+                    .body(response.body());
+        }
     }
 
     // =========================================================
     // COMMON AGENT RELAY
     // =========================================================
 
-    private ResponseEntity<String> relayToAgent(
+    private AgentRelayService.RelayResponse relayToAgent(
             String userId,
             Map<String, String> headers,
             TallyRequest requestBody
@@ -2470,7 +2402,7 @@ public class TallyService {
 
             acquired =
                     tallyGate.tryAcquire(
-                            TALLY_WAIT_TIMEOUT_SECONDS,
+                            globalWaitTimeoutSeconds,
                             TimeUnit.SECONDS
                     );
 
@@ -2492,7 +2424,7 @@ public class TallyService {
             );
         }
 
-        AgentRelayService.RelayResponse response;
+        AgentRelayService.RelayResponse response = null;
 
         try {
 
@@ -2504,48 +2436,51 @@ public class TallyService {
                             jsonBody
                     );
 
+            if (response == null) {
+
+                throw new ResponseStatusException(
+                        HttpStatus.BAD_GATEWAY,
+                        "Tally Agent returned no response"
+                );
+            }
+
+            int status =
+                    response.status();
+
+            if (status < 200
+                    || status >= 300) {
+
+                throw new ResponseStatusException(
+                        HttpStatus.BAD_GATEWAY,
+                        "Tally Agent returned an unsuccessful response: " + status
+                );
+            }
+
+            response.addCleanupAction(tallyGate::release);
+            return response;
+
         } catch (ResponseStatusException e) {
 
+            if (response != null) {
+                response.close();
+            } else {
+                tallyGate.release();
+            }
             throw e;
 
         } catch (Exception e) {
 
-            throw new ResponseStatusException(
-                    HttpStatus.BAD_GATEWAY,
-                    "Unable to communicate with Tally Agent"
-            );
-
-        } finally {
-
-            tallyGate.release();
-        }
-
-        if (response == null) {
+            if (response != null) {
+                response.close();
+            } else {
+                tallyGate.release();
+            }
 
             throw new ResponseStatusException(
                     HttpStatus.BAD_GATEWAY,
-                    "Tally Agent returned no response"
+                    "Unable to communicate with Tally Agent: " + e.getMessage()
             );
         }
-
-        int status =
-                response.status();
-
-        String body =
-                response.body();
-
-        if (status < 200
-                || status >= 300) {
-
-            throw new ResponseStatusException(
-                    HttpStatus.BAD_GATEWAY,
-                    "Tally Agent returned an unsuccessful response"
-            );
-        }
-
-        return ResponseEntity
-                .status(status)
-                .body(body);
     }
 
     // =========================================================

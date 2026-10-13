@@ -13,6 +13,9 @@ import lombok.RequiredArgsConstructor;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
 
+import java.io.ByteArrayInputStream;
+import java.io.InputStream;
+import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
@@ -56,42 +59,33 @@ public class CompanyService {
         try {
             jsonBody = objectMapper.writeValueAsString(payload);
         } catch (Exception e) {
-            throw new CompanyRequestPreparationException("Failed to prepare Tally company request"
-            );
+            throw new CompanyRequestPreparationException("Failed to prepare Tally company request");
         }
 
+        try (AgentRelayService.RelayResponse response =
+                     agentRelayService.relay(
+                             userId,
+                             "POST",
+                             headers,
+                             jsonBody
+                     )) {
 
-        AgentRelayService.RelayResponse response =
-                agentRelayService.relay(
-                        userId,
-                        "POST",
-                        headers,
-                        jsonBody
-                );
+            if (response == null) {
+                throw new CompanyEmptyResponseException("Empty response received from Tally Agent");
+            }
 
-        if (response == null) {
-            throw new CompanyEmptyResponseException("Empty response received from Tally Agent"
-            );
+            if (response.status() < 200 || response.status() >= 300) {
+                throw new CompanyAgentStatusException("Tally Agent returned HTTP status " + response.status());
+            }
+
+            try (InputStream stream = response.openStream()) {
+                return parseCompanyCollection(stream);
+            } catch (CompanyResponseParseException | CompanyEmptyResponseException e) {
+                throw e;
+            } catch (Exception e) {
+                throw new CompanyResponseParseException("Failed to parse Tally company response: " + e.getMessage());
+            }
         }
-
-        if (response.status() < 200
-                || response.status() >= 300) {
-
-            throw new CompanyAgentStatusException("Tally Agent returned HTTP status "
-                    + response.status()
-            );
-        }
-
-        String rawResponse = response.body();
-
-        if (rawResponse == null
-                || rawResponse.isBlank()) {
-
-            throw new CompanyEmptyResponseException("Empty response received from Tally"
-            );
-        }
-
-        return parseCompanyCollection(rawResponse);
     }
 
     // ============================================================
@@ -127,9 +121,14 @@ public class CompanyService {
     // PARSE
     // ============================================================
 
-    private List<CompanyDto> parseCompanyCollection(
-            String rawJson
-    ) {
+    public List<CompanyDto> parseCompanyCollection(String rawJson) {
+        if (rawJson == null || rawJson.isBlank()) {
+            throw new CompanyEmptyResponseException("Empty response received from Tally");
+        }
+        return parseCompanyCollection(new ByteArrayInputStream(rawJson.getBytes(StandardCharsets.UTF_8)));
+    }
+
+    public List<CompanyDto> parseCompanyCollection(InputStream inputStream) {
 
         List<CompanyDto> results =
                 new ArrayList<>();
@@ -137,16 +136,18 @@ public class CompanyService {
         try {
 
             JsonNode root =
-                    objectMapper.readTree(rawJson);
+                    objectMapper.readTree(inputStream);
+
+            if (root == null || root.isNull() || root.isMissingNode()) {
+                throw new CompanyEmptyResponseException("Empty response received from Tally");
+            }
 
             JsonNode collection =
                     root.path("data")
                             .path("collection");
 
             if (!collection.isArray()) {
-
-                throw new CompanyResponseParseException("Invalid company response received from Tally"
-                );
+                throw new CompanyResponseParseException("Invalid company response received from Tally");
             }
 
             for (JsonNode companyNode : collection) {
@@ -158,13 +159,11 @@ public class CompanyService {
                                                 .path("metadata")
                                                 .path("name")
                                 ),
-
                                 textOrNull(
                                         companyNode
                                                 .path("name")
                                                 .path("value")
                                 ),
-
                                 textOrNull(
                                         companyNode
                                                 .path("name")
@@ -172,7 +171,6 @@ public class CompanyService {
                         );
 
                 if (name != null) {
-
                     results.add(
                             new CompanyDto(name)
                     );
@@ -181,14 +179,11 @@ public class CompanyService {
 
             return results;
 
-        } catch (CompanyResponseParseException e) {
-
+        } catch (CompanyResponseParseException | CompanyEmptyResponseException e) {
             throw e;
 
         } catch (Exception e) {
-
-            throw new CompanyResponseParseException("Failed to parse Tally company response"
-            );
+            throw new CompanyResponseParseException("Failed to parse Tally company response");
         }
     }
 

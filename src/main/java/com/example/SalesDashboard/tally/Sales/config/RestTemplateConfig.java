@@ -1,4 +1,4 @@
-package com.example.SalesDashboard.tally.sales.config;
+package com.example.SalesDashboard.tally.Sales.config;
 
 import org.springframework.boot.restclient.RestTemplateBuilder;
 import org.springframework.context.annotation.Bean;
