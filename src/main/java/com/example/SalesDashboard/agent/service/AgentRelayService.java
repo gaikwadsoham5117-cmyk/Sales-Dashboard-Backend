@@ -374,14 +374,13 @@ public class AgentRelayService {
         // This method itself runs only after the request
         // reaches the front of the Agent queue.
         //
-        // Therefore the connection/stream timeouts do NOT
-        // start while the request is waiting in queue.
+        // Therefore the 60-second PendingRequest timeout
+        // does NOT start while the request is waiting in queue.
         // ========================================================
 
-        CompletableFuture<com.example.SalesDashboard.agent.model.AgentProxyResponse> future =
+        CompletableFuture<JsonNode> future =
                 pendingRequestRegistry.register(
-                        requestId,
-                        agentId
+                        requestId
                 );
 
         // ========================================================
@@ -474,7 +473,7 @@ public class AgentRelayService {
         // PROXY_RESPONSE_END
         // ========================================================
 
-        com.example.SalesDashboard.agent.model.AgentProxyResponse response;
+        JsonNode response;
 
         try {
 
@@ -486,8 +485,14 @@ public class AgentRelayService {
             Throwable cause =
                     e.getCause();
 
-            if (cause instanceof RuntimeException runtimeException) {
-                throw runtimeException;
+            if (cause instanceof TimeoutException) {
+
+                throw new AgentTimeoutException(
+                        "Tally Agent did not respond "
+                                + "within 60 seconds. "
+                                + "Check TallyPrime and the "
+                                + "Tally Agent on that PC."
+                );
             }
 
             String message =
@@ -519,12 +524,17 @@ public class AgentRelayService {
         // PROCESS AGENT RESPONSE
         // ========================================================
 
-        if (!response.ok()) {
+        boolean ok =
+                response.path("ok")
+                        .asBoolean(false);
+
+        if (!ok) {
 
             String error =
-                    response.error() != null
-                            ? response.error()
-                            : "Unknown agent error";
+                    response.path("error")
+                            .asText(
+                                    "Unknown agent error"
+                            );
 
             log.warn(
                     "Agent relay failed | userId={} | organizationId={} | agentId={} | requestId={} | error={}",
@@ -542,10 +552,12 @@ public class AgentRelayService {
         }
 
         int status =
-                response.status();
+                response.path("status")
+                        .asInt(200);
 
         String responseBody =
-                response.body() != null ? response.body() : "";
+                response.path("body")
+                        .asText("");
 
         log.info(
                 "TALLY RESPONSE RECEIVED | requestId={} | agentId={} | status={} | bodyLength={}",

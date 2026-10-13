@@ -369,16 +369,9 @@ public class AgentWebSocketHandler
             return;
         }
 
-        Integer chunkIndex = node.has("chunkIndex") ? node.path("chunkIndex").asInt() : null;
-        Long bytes = node.has("bytes") ? node.path("bytes").asLong() : null;
-        Long cumulativeBytes = node.has("cumulativeBytes") ? node.path("cumulativeBytes").asLong() : null;
-
         pendingRequestRegistry.appendChunk(
                 requestId,
-                chunk,
-                chunkIndex,
-                bytes,
-                cumulativeBytes
+                chunk
         );
     }
 
@@ -406,20 +399,24 @@ public class AgentWebSocketHandler
             return;
         }
 
-        Integer totalChunks = node.has("totalChunks") ? node.path("totalChunks").asInt() : null;
-        Long totalBytes = node.has("totalBytes") ? node.path("totalBytes").asLong() : null;
-
         log.info(
-                "TALLY STREAM END | requestId={} | totalChunks={} | totalBytes={}",
-                requestId,
-                totalChunks,
-                totalBytes
+                "TALLY STREAM END | requestId={}",
+                requestId
         );
 
+        /*
+         * This converts all received chunks into the final object:
+         *
+         * {
+         *     ok: true,
+         *     status: 200,
+         *     body: "complete Tally JSON..."
+         * }
+         *
+         * AgentRelayService can then process it normally.
+         */
         pendingRequestRegistry.completeStream(
-                requestId,
-                totalChunks,
-                totalBytes
+                requestId
         );
     }
 
@@ -449,14 +446,6 @@ public class AgentWebSocketHandler
                 agentId != null
                         && !agentId.isBlank()
         ) {
-
-            /*
-             * Fail any pending requests for this agent immediately instead of hanging until timeout.
-             */
-            pendingRequestRegistry.failAgentRequests(
-                    agentId,
-                    "WebSocket closed with status " + status
-            );
 
             /*
              * Pass the actual closing session.
@@ -489,16 +478,6 @@ public class AgentWebSocketHandler
                 agentId,
                 exception.getMessage()
         );
-
-        if (
-                agentId != null
-                        && !agentId.isBlank()
-        ) {
-            pendingRequestRegistry.failAgentRequests(
-                    agentId,
-                    "WebSocket transport error: " + exception.getMessage()
-            );
-        }
 
         if (session.isOpen()) {
 

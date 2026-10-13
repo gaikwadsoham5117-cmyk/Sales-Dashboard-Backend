@@ -347,41 +347,6 @@ public class GlobalExceptionHandler {
         return ResponseEntity.status(HttpStatus.GATEWAY_TIMEOUT).body(errorResponse);
     }
 
-    @ExceptionHandler(AgentConnectionTimeoutException.class)
-    public ResponseEntity<ErrorResponse> handleAgentConnectionTimeoutException(AgentConnectionTimeoutException ex) {
-        log.warn("Agent initial connection/response timeout: {}", ex.getMessage());
-        ErrorResponse errorResponse = new ErrorResponse(HttpStatus.GATEWAY_TIMEOUT.value(), ex.getMessage());
-        return ResponseEntity.status(HttpStatus.GATEWAY_TIMEOUT).body(errorResponse);
-    }
-
-    @ExceptionHandler(StreamIdleTimeoutException.class)
-    public ResponseEntity<ErrorResponse> handleStreamIdleTimeoutException(StreamIdleTimeoutException ex) {
-        log.warn("Agent stream idle timeout: {}", ex.getMessage());
-        ErrorResponse errorResponse = new ErrorResponse(HttpStatus.GATEWAY_TIMEOUT.value(), ex.getMessage());
-        return ResponseEntity.status(HttpStatus.GATEWAY_TIMEOUT).body(errorResponse);
-    }
-
-    @ExceptionHandler(OperationDeadlineException.class)
-    public ResponseEntity<ErrorResponse> handleOperationDeadlineException(OperationDeadlineException ex) {
-        log.warn("Agent operation deadline exceeded: {}", ex.getMessage());
-        ErrorResponse errorResponse = new ErrorResponse(HttpStatus.GATEWAY_TIMEOUT.value(), ex.getMessage());
-        return ResponseEntity.status(HttpStatus.GATEWAY_TIMEOUT).body(errorResponse);
-    }
-
-    @ExceptionHandler(ResponseSizeLimitExceededException.class)
-    public ResponseEntity<ErrorResponse> handleResponseSizeLimitExceededException(ResponseSizeLimitExceededException ex) {
-        log.warn("Agent response size limit exceeded: {}", ex.getMessage());
-        ErrorResponse errorResponse = new ErrorResponse(HttpStatus.PAYLOAD_TOO_LARGE.value(), ex.getMessage());
-        return ResponseEntity.status(HttpStatus.PAYLOAD_TOO_LARGE).body(errorResponse);
-    }
-
-    @ExceptionHandler(AgentDisconnectedException.class)
-    public ResponseEntity<ErrorResponse> handleAgentDisconnectedException(AgentDisconnectedException ex) {
-        log.warn("Agent disconnected during request: {}", ex.getMessage());
-        ErrorResponse errorResponse = new ErrorResponse(HttpStatus.SERVICE_UNAVAILABLE.value(), ex.getMessage());
-        return ResponseEntity.status(HttpStatus.SERVICE_UNAVAILABLE).body(errorResponse);
-    }
-
     @ExceptionHandler(AgentCommunicationException.class)
     public ResponseEntity<ErrorResponse> handleAgentCommunicationException(AgentCommunicationException ex) {
         log.warn("Agent communication failed: {}", ex.getMessage());
